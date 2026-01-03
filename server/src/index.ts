@@ -13,6 +13,14 @@ app.use('/*', cors());
 const SHARED_SECRET = process.env.ENCRYPT_CHAT_SECRET || 'change-me-in-production';
 const CLAUDE_API_URL = process.env.CLAUDE_API_URL || 'https://api.anthropic.com';
 const CLAUDE_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+const AUTH_TYPE = process.env.AUTH_TYPE || 'x-api-key'; // 'x-api-key' or 'bearer'
+
+function getAuthHeaders(): Record<string, string> {
+  if (AUTH_TYPE === 'bearer') {
+    return { 'Authorization': `Bearer ${CLAUDE_API_KEY}` };
+  }
+  return { 'x-api-key': CLAUDE_API_KEY, 'anthropic-version': '2023-06-01' };
+}
 
 interface EncryptedPayload {
   data: string; // base64 encrypted data
@@ -80,8 +88,7 @@ ${existingSystem}`;
       method: request.method,
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': CLAUDE_API_KEY,
-        'anthropic-version': '2023-06-01',
+        ...getAuthHeaders(),
         ...request.headers
       },
       body: request.body ? JSON.stringify(request.body) : undefined
@@ -139,8 +146,7 @@ app.post('/proxy/stream', async (c) => {
       method: request.method,
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': CLAUDE_API_KEY,
-        'anthropic-version': '2023-06-01',
+        ...getAuthHeaders(),
         ...request.headers
       },
       body: request.body ? JSON.stringify(request.body) : undefined
