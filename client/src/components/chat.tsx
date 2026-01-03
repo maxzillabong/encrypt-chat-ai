@@ -18,7 +18,11 @@ interface Message {
 }
 
 const PROXY_URL = process.env.NEXT_PUBLIC_PROXY_URL || 'http://localhost:3100';
-const SHARED_SECRET = process.env.NEXT_PUBLIC_SHARED_SECRET || 'dev-secret';
+const SHARED_SECRET = process.env.NEXT_PUBLIC_ENCRYPT_SECRET || 'dev-secret';
+
+// Debug logging
+console.log('[Sage] Proxy URL:', PROXY_URL);
+console.log('[Sage] Secret configured:', !!process.env.NEXT_PUBLIC_ENCRYPT_SECRET);
 
 export function Chat() {
   const [messages, setMessages] = useState<Message[]>([]);
