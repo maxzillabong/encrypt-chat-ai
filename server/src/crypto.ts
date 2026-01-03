@@ -1,20 +1,21 @@
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
+import { createCipheriv, createDecipheriv, randomBytes, pbkdf2Sync } from 'crypto';
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12;
-const TAG_LENGTH = 16;
 const SALT_LENGTH = 16;
+const TAG_LENGTH = 16;
 
 /**
- * Derives a 256-bit key from a passphrase using scrypt
+ * Derives a 256-bit key from a passphrase using PBKDF2 (matches WebCrypto client)
  */
 export function deriveKey(passphrase: string, salt: Buffer): Buffer {
-  return scryptSync(passphrase, salt, 32);
+  return pbkdf2Sync(passphrase, salt, 100000, 32, 'sha256');
 }
 
 /**
  * Encrypts plaintext with AES-256-GCM
- * Output format: salt (16) + iv (12) + tag (16) + ciphertext
+ * Output format: salt (16) + iv (12) + ciphertext + tag (16)
+ * This matches WebCrypto format where tag is appended to ciphertext
  */
 export function encrypt(plaintext: string, passphrase: string): Buffer {
   const salt = randomBytes(SALT_LENGTH);
@@ -28,18 +29,21 @@ export function encrypt(plaintext: string, passphrase: string): Buffer {
   ]);
   const tag = cipher.getAuthTag();
 
-  // Combine: salt + iv + tag + ciphertext
-  return Buffer.concat([salt, iv, tag, encrypted]);
+  // Format: salt + iv + ciphertext + tag (matches WebCrypto output)
+  return Buffer.concat([salt, iv, encrypted, tag]);
 }
 
 /**
- * Decrypts ciphertext encrypted with encrypt()
+ * Decrypts ciphertext encrypted with encrypt() or WebCrypto
+ * Input format: salt (16) + iv (12) + ciphertext + tag (16)
  */
 export function decrypt(data: Buffer, passphrase: string): string {
   const salt = data.subarray(0, SALT_LENGTH);
   const iv = data.subarray(SALT_LENGTH, SALT_LENGTH + IV_LENGTH);
-  const tag = data.subarray(SALT_LENGTH + IV_LENGTH, SALT_LENGTH + IV_LENGTH + TAG_LENGTH);
-  const ciphertext = data.subarray(SALT_LENGTH + IV_LENGTH + TAG_LENGTH);
+  // Tag is the last 16 bytes
+  const tag = data.subarray(data.length - TAG_LENGTH);
+  // Ciphertext is between iv and tag
+  const ciphertext = data.subarray(SALT_LENGTH + IV_LENGTH, data.length - TAG_LENGTH);
 
   const key = deriveKey(passphrase, salt);
   const decipher = createDecipheriv(ALGORITHM, key, iv);
