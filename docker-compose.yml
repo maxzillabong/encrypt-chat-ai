@@ -10,9 +10,10 @@ services:
       - "3100:3100"
     environment:
       - PORT=3100
-      - ENCRYPT_CHAT_SECRET=${ENCRYPT_CHAT_SECRET:-change-me-in-production}
+      - ENCRYPT_CHAT_SECRET=${ENCRYPT_CHAT_SECRET}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - CLAUDE_API_URL=https://api.anthropic.com
+      - CLAUDE_API_URL=${CLAUDE_API_URL:-https://api.anthropic.com}
+      - AUTH_TYPE=${AUTH_TYPE:-x-api-key}
       - QDRANT_URL=http://qdrant:6333
     depends_on:
       - qdrant
@@ -37,11 +38,11 @@ services:
     build:
       context: ./client
       dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_PROXY_URL=${NEXT_PUBLIC_PROXY_URL}
+        - NEXT_PUBLIC_ENCRYPT_SECRET=${ENCRYPT_CHAT_SECRET}
     ports:
       - "3000:3000"
-    environment:
-      - NEXT_PUBLIC_PROXY_URL=http://proxy:3100
-      - NEXT_PUBLIC_SHARED_SECRET=${ENCRYPT_CHAT_SECRET:-change-me-in-production}
     depends_on:
       - proxy
     networks:
