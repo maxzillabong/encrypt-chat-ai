@@ -137,6 +137,110 @@ app.post('/proxy', async (c) => {
 });
 
 
+// Streaming endpoint using SSE
+app.post('/proxy/stream', async (c) => {
+  try {
+    const { data, sessionId = 'default' } = await c.req.json<EncryptedPayload>();
+
+    // Decrypt the incoming request
+    const decryptedJson = decryptFromBase64(data, SHARED_SECRET);
+    const request: DecryptedRequest = JSON.parse(decryptedJson);
+
+    console.log(`[Proxy/Stream] ${request.method} ${request.endpoint}`);
+
+    // Build the prompt from messages
+    const messages = request.body?.messages || [];
+    const lastUserMessage = messages.filter(m => m.role === 'user').pop();
+
+    if (lastUserMessage) {
+      await memory.store(sessionId, 'user', lastUserMessage.content);
+    }
+
+    // Recall relevant context
+    const relevantMemories = lastUserMessage
+      ? await memory.recall(lastUserMessage.content, 5)
+      : [];
+
+    let fullPrompt = '';
+    if (relevantMemories.length > 0) {
+      const memoryContext = relevantMemories
+        .filter(m => m.score > 0.3)
+        .map(m => `[${m.payload.role}]: ${m.payload.content}`)
+        .join('\n');
+      if (memoryContext) {
+        fullPrompt += `Previous conversation context:\n${memoryContext}\n\n`;
+      }
+    }
+    fullPrompt += messages.map(m => `${m.role}: ${m.content}`).join('\n\n');
+
+    // Write prompt to temp file
+    const fs = await import('fs');
+    const tmpFile = `/tmp/prompt-${Date.now()}.txt`;
+    fs.writeFileSync(tmpFile, fullPrompt);
+
+    console.log(`[Proxy/Stream] Starting Claude CLI stream...`);
+
+    // Create SSE stream
+    const stream = new ReadableStream({
+      async start(controller) {
+        const encoder = new TextEncoder();
+        let fullResponse = '';
+
+        const proc = spawn('sh', ['-c', `claude -p --output-format text "$(cat ${tmpFile})"`], {
+          env: process.env,
+          stdio: ['pipe', 'pipe', 'pipe']
+        });
+
+        proc.stdout.on('data', (chunk: Buffer) => {
+          const text = chunk.toString();
+          fullResponse += text;
+
+          // Encrypt and send chunk
+          const encryptedChunk = encryptToBase64(text, SHARED_SECRET);
+          controller.enqueue(encoder.encode(`data: ${encryptedChunk}\n\n`));
+        });
+
+        proc.stderr.on('data', (chunk: Buffer) => {
+          console.log('[Proxy/Stream] stderr:', chunk.toString());
+        });
+
+        proc.on('close', async (code) => {
+          console.log(`[Proxy/Stream] Claude CLI closed with code ${code}`);
+
+          // Clean up temp file
+          try { fs.unlinkSync(tmpFile); } catch (e) {}
+
+          // Store full response in memory
+          if (fullResponse) {
+            await memory.store(sessionId, 'assistant', fullResponse);
+          }
+
+          // Send done event
+          controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
+          controller.close();
+        });
+
+        proc.on('error', (err) => {
+          console.log('[Proxy/Stream] Error:', err.message);
+          controller.error(err);
+        });
+      }
+    });
+
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*'
+      }
+    });
+  } catch (error) {
+    console.error('[Proxy/Stream] Error:', error);
+    return c.json({ error: 'Stream error' }, 500);
+  }
+});
+
 // Health check (unencrypted, just for monitoring)
 app.get('/health', (c) => c.json({ status: 'ok', service: 'sage-proxy' }));
 
