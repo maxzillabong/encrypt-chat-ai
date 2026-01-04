@@ -15,43 +15,30 @@ const SHARED_SECRET = process.env.ENCRYPT_CHAT_SECRET || 'change-me-in-productio
 
 // Call Claude using CLI (uses OAuth token from server)
 async function callClaudeCLI(prompt: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const args = ['-p', '--output-format', 'text', prompt];
+  const { execSync } = await import('child_process');
 
-    console.log('[Claude CLI] Spawning with args:', args.slice(0, 3));
+  console.log('[Claude CLI] Calling with prompt length:', prompt.length);
 
-    const proc = spawn('claude', args, {
-      env: { ...process.env },
-      stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: 120000 // 2 minute timeout
+  try {
+    // Write prompt to temp file to avoid argument length issues
+    const fs = await import('fs');
+    const tmpFile = `/tmp/prompt-${Date.now()}.txt`;
+    fs.writeFileSync(tmpFile, prompt);
+
+    const result = execSync(`claude -p --output-format text "$(cat ${tmpFile})"`, {
+      encoding: 'utf8',
+      timeout: 120000,
+      maxBuffer: 10 * 1024 * 1024,
+      env: process.env
     });
 
-    let stdout = '';
-    let stderr = '';
-
-    proc.stdout.on('data', (data) => {
-      stdout += data.toString();
-      console.log('[Claude CLI] stdout chunk:', data.toString().slice(0, 100));
-    });
-    proc.stderr.on('data', (data) => {
-      stderr += data.toString();
-      console.log('[Claude CLI] stderr:', data.toString().slice(0, 200));
-    });
-
-    proc.on('close', (code) => {
-      console.log('[Claude CLI] Process closed with code:', code);
-      if (code === 0) {
-        resolve(stdout.trim());
-      } else {
-        reject(new Error(stderr || `Claude CLI exited with code ${code}`));
-      }
-    });
-
-    proc.on('error', (err) => {
-      console.log('[Claude CLI] Process error:', err.message);
-      reject(err);
-    });
-  });
+    fs.unlinkSync(tmpFile);
+    console.log('[Claude CLI] Got response length:', result.length);
+    return result.trim();
+  } catch (error: any) {
+    console.log('[Claude CLI] Error:', error.message);
+    throw error;
+  }
 }
 
 interface EncryptedPayload {
