@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,6 +19,37 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  isTyping?: boolean;
+}
+
+// Typewriter effect for simulated streaming
+function TypewriterText({ content, onComplete }: { content: string; onComplete: () => void }) {
+  const [displayedContent, setDisplayedContent] = useState('');
+  const [isComplete, setIsComplete] = useState(false);
+
+  useEffect(() => {
+    if (isComplete) return;
+
+    let currentIndex = 0;
+    const words = content.split(/(\s+)/); // Split by whitespace, keeping separators
+    let currentText = '';
+
+    const interval = setInterval(() => {
+      if (currentIndex < words.length) {
+        currentText += words[currentIndex];
+        setDisplayedContent(currentText);
+        currentIndex++;
+      } else {
+        clearInterval(interval);
+        setIsComplete(true);
+        onComplete();
+      }
+    }, 15 + Math.random() * 25); // Random delay between 15-40ms per word for natural feel
+
+    return () => clearInterval(interval);
+  }, [content, isComplete, onComplete]);
+
+  return <MarkdownContent content={displayedContent} />;
 }
 
 const PROXY_URL = process.env.NEXT_PUBLIC_PROXY_URL || 'http://localhost:3100';
@@ -171,6 +202,14 @@ export function Chat() {
     }
   }, [messages]);
 
+  const markTypingComplete = useCallback((messageId: string) => {
+    setMessages(prev =>
+      prev.map(m =>
+        m.id === messageId ? { ...m, isTyping: false } : m
+      )
+    );
+  }, []);
+
   const sendMessage = async () => {
     if (!input.trim() || isLoading) return;
 
@@ -220,7 +259,8 @@ export function Chat() {
         id: crypto.randomUUID(),
         role: 'assistant',
         content: body.content?.[0]?.text || body.error?.message || 'No response',
-        timestamp: new Date()
+        timestamp: new Date(),
+        isTyping: true
       };
 
       setMessages(prev => [...prev, assistantMessage]);
@@ -330,7 +370,14 @@ export function Chat() {
                 }`}>
                   {message.role === 'assistant' ? (
                     <div className="text-sm leading-relaxed prose prose-invert prose-sm max-w-none">
-                      <MarkdownContent content={message.content} />
+                      {message.isTyping ? (
+                        <TypewriterText
+                          content={message.content}
+                          onComplete={() => markTypingComplete(message.id)}
+                        />
+                      ) : (
+                        <MarkdownContent content={message.content} />
+                      )}
                     </div>
                   ) : (
                     <p className="whitespace-pre-wrap text-sm leading-relaxed">
