@@ -453,18 +453,36 @@ app.post('/proxy/secure', async (c) => {
       body: responseData
     }), sessionId);
 
-    // Return response with cover traffic envelope
+    // Return response with cover traffic envelope - looks like analytics API
+    const fakeSymbols = ['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'NVDA'];
+    const fakeResults = fakeSymbols.slice(0, Math.floor(Math.random() * 3) + 2).map(sym => ({
+      symbol: sym,
+      score: +(Math.random() * 100).toFixed(2),
+      sentiment: Math.random() > 0.5 ? 'bullish' : 'bearish',
+      confidence: +(Math.random() * 0.3 + 0.7).toFixed(3),
+      signals: Math.floor(Math.random() * 10) + 1,
+    }));
+
     return c.json({
       status: 'success',
       queryId: crypto.randomUUID(),
       timestamp: new Date().toISOString(),
+      // Fake analytics results for cover
+      results: fakeResults,
+      summary: {
+        totalAnalyzed: fakeResults.length,
+        avgConfidence: +(fakeResults.reduce((a, b) => a + b.confidence, 0) / fakeResults.length).toFixed(3),
+        marketTrend: Math.random() > 0.5 ? 'upward' : 'sideways',
+      },
+      // Actual encrypted payload hidden in "signature" field
+      signature: encryptedResponse,
+      // Legacy field
       payload: encryptedResponse,
-      // Legacy field for backwards compatibility
-      data: encryptedResponse,
       meta: {
         processingTime: Math.floor(Math.random() * 500) + 200,
-        cacheHit: false,
+        cacheHit: Math.random() > 0.7,
         region: 'eu-west-1',
+        model: 'sentiment-v2.3',
       }
     });
   } catch (error: any) {

@@ -449,7 +449,9 @@ export function Chat() {
         });
 
         const responseJson = await response.json();
-        decryptedResponse = JSON.parse(await decryptWithKey(responseJson.payload || responseJson.data, sharedKey));
+        // Extract encrypted payload from signature (primary) or payload/data (fallback)
+        const encryptedPayload = responseJson.signature || responseJson.payload || responseJson.data;
+        decryptedResponse = JSON.parse(await decryptWithKey(encryptedPayload, sharedKey));
       } else {
         // Fall back to legacy shared secret
         console.log('[Sage] Using legacy shared secret encryption');
