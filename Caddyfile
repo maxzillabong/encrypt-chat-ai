@@ -1,0 +1,22 @@
+# Sage - Encrypted Claude Chat
+# Add this to your existing Caddyfile or use it standalone
+
+sage.maxzilla.nl {
+    # API routes go to the proxy server
+    handle /key-exchange {
+        reverse_proxy proxy:3100
+    }
+
+    handle /proxy/* {
+        reverse_proxy proxy:3100
+    }
+
+    handle /health {
+        reverse_proxy proxy:3100
+    }
+
+    # Everything else goes to the client
+    handle {
+        reverse_proxy client:3000
+    }
+}

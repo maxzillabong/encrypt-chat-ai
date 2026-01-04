@@ -5,10 +5,16 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "mcp": "tsx src/mcp-qdrant.ts",
+    "mcp:build": "tsc src/mcp-qdrant.ts --outDir dist --module nodenext --moduleResolution nodenext"
+  },
+  "bin": {
+    "sage-memory": "./dist/mcp-qdrant.js"
   },
   "dependencies": {
     "@hono/node-server": "^1.0.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
     "hono": "^4.0.0",
     "mammoth": "^1.8.0",
     "pdf-parse": "^1.1.1",

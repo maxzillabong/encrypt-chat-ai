@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "memory": {
+      "command": "node",
+      "args": ["/opt/sage/dist/mcp-qdrant.js"],
+      "env": {
+        "QDRANT_URL": "http://localhost:6333"
+      }
+    }
+  }
+}

@@ -1,4 +1,21 @@
 services:
+  # Caddy reverse proxy
+  caddy:
+    image: caddy:latest
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - sage-network
+    restart: unless-stopped
+    depends_on:
+      - proxy
+      - client
+
   # Encrypted proxy server
   proxy:
     build:
@@ -53,3 +70,5 @@ networks:
 
 volumes:
   qdrant-data:
+  caddy-data:
+  caddy-config:
