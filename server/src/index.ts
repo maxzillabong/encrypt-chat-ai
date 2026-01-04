@@ -61,6 +61,26 @@ async function parseWithDocling(filePath: string): Promise<string> {
   }
 }
 
+// Strip metadata from images using pngcrush (privacy + compression)
+async function stripImageMetadata(filePath: string): Promise<void> {
+  const { execSync } = await import('child_process');
+
+  try {
+    if (filePath.toLowerCase().endsWith('.png')) {
+      const crushedPath = `${filePath}.crushed`;
+      execSync(`pngcrush -rem alla -rem text -q "${filePath}" "${crushedPath}" 2>/dev/null`, {
+        timeout: 30000
+      });
+      // Replace original with crushed version
+      fs.renameSync(crushedPath, filePath);
+      console.log(`[pngcrush] Stripped metadata from ${filePath}`);
+    }
+  } catch (error: any) {
+    // If pngcrush fails, just continue with original file
+    console.log(`[pngcrush] Skipped: ${error.message}`);
+  }
+}
+
 // Extract text from various file types using Docling
 async function extractFileContent(file: AttachedFile): Promise<string> {
   const buffer = Buffer.from(file.data, 'base64');
@@ -75,9 +95,14 @@ async function extractFileContent(file: AttachedFile): Promise<string> {
 
     // For everything else (images, PDFs, Word, Excel, etc.), use Docling
     // Save to temp file first
-    const ext = file.name.split('.').pop() || 'bin';
+    const ext = file.name.split('.').pop()?.toLowerCase() || 'bin';
     const tmpPath = `/tmp/docling-${Date.now()}.${ext}`;
     fs.writeFileSync(tmpPath, buffer);
+
+    // Strip metadata from images for privacy
+    if (file.type.startsWith('image/')) {
+      await stripImageMetadata(tmpPath);
+    }
 
     const extractedText = await parseWithDocling(tmpPath);
 
