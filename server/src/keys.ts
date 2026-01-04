@@ -127,8 +127,9 @@ export function performKeyExchange(clientPublicKeyBase64: string): string {
     publicKey: clientPublicKey,
   });
 
-  // Hash the shared secret to get a proper AES key
-  const aesKey = crypto.createHash('sha256').update(sharedSecret).digest();
+  // Use raw shared secret as AES key (matches Web Crypto's deriveKey behavior)
+  // For P-256, the shared secret is exactly 32 bytes = 256 bits for AES-256
+  const aesKey = sharedSecret;
 
   // Store session (use client public key as session ID)
   const sessionId = clientPublicKeyBase64.slice(0, 32);
@@ -165,8 +166,8 @@ export function encryptForClient(plaintext: string, sessionId: string): string {
 
   const authTag = cipher.getAuthTag();
 
-  // Combine: iv (12) + authTag (16) + ciphertext
-  const result = Buffer.concat([iv, authTag, encrypted]);
+  // Combine: iv (12) + ciphertext + authTag (16) - matches Web Crypto format
+  const result = Buffer.concat([iv, encrypted, authTag]);
   return result.toString('base64');
 }
 
@@ -179,9 +180,10 @@ export function decryptFromClient(base64Data: string, sessionId: string): string
 
   const data = Buffer.from(base64Data, 'base64');
 
+  // Format: iv (12) + ciphertext + authTag (16) - matches Web Crypto format
   const iv = data.slice(0, 12);
-  const authTag = data.slice(12, 28);
-  const ciphertext = data.slice(28);
+  const authTag = data.slice(-16); // Last 16 bytes
+  const ciphertext = data.slice(12, -16); // Middle part
 
   const decipher = crypto.createDecipheriv('aes-256-gcm', sharedSecret, iv);
   decipher.setAuthTag(authTag);
