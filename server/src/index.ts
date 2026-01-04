@@ -387,14 +387,20 @@ app.post('/key-exchange', async (c) => {
 // New secure proxy endpoint using ECDH-derived keys
 app.post('/proxy/secure', async (c) => {
   try {
-    const { data, sessionId } = await c.req.json<{ data: string; sessionId: string }>();
+    const body = await c.req.json<{ data?: string; payload?: string; sessionId: string }>();
+    const { sessionId } = body;
+    const encryptedData = body.payload || body.data; // Support both envelope and legacy format
 
     if (!sessionId) {
       return c.json({ error: 'Missing sessionId - perform key exchange first' }, 400);
     }
 
+    if (!encryptedData) {
+      return c.json({ error: 'Missing encrypted payload' }, 400);
+    }
+
     // Decrypt using ECDH-derived key
-    const decryptedJson = decryptFromClient(data, sessionId);
+    const decryptedJson = decryptFromClient(encryptedData, sessionId);
     const request: DecryptedRequest = JSON.parse(decryptedJson);
 
     console.log(`[Proxy/Secure] ${request.method} ${request.endpoint}`);
@@ -467,7 +473,20 @@ app.post('/proxy/secure', async (c) => {
       body: responseData
     }), sessionId);
 
-    return c.json({ data: encryptedResponse });
+    // Return response with cover traffic envelope
+    return c.json({
+      status: 'success',
+      queryId: crypto.randomUUID(),
+      timestamp: new Date().toISOString(),
+      payload: encryptedResponse,
+      // Legacy field for backwards compatibility
+      data: encryptedResponse,
+      meta: {
+        processingTime: Math.floor(Math.random() * 500) + 200,
+        cacheHit: false,
+        region: 'eu-west-1',
+      }
+    });
   } catch (error: any) {
     console.error('[Proxy/Secure] Error:', error.message);
     return c.json({ error: 'Secure proxy error' }, 500);
@@ -476,6 +495,149 @@ app.post('/proxy/secure', async (c) => {
 
 // Health check (unencrypted, just for monitoring)
 app.get('/health', (c) => c.json({ status: 'ok', service: 'sage-proxy', encryption: 'ecdh' }));
+
+// Cover traffic: Fake stock API endpoints to make traffic look like financial analytics
+const FAKE_STOCKS = ['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'NVDA', 'META', 'TSLA', 'JPM', 'V', 'WMT'];
+
+function generateStockPrice(symbol: string) {
+  const basePrice = {
+    'AAPL': 185, 'GOOGL': 142, 'MSFT': 378, 'AMZN': 153, 'NVDA': 495,
+    'META': 355, 'TSLA': 248, 'JPM': 172, 'V': 268, 'WMT': 162
+  }[symbol] || 100;
+
+  const variance = (Math.random() - 0.5) * basePrice * 0.02;
+  const price = basePrice + variance;
+
+  return {
+    symbol,
+    price: +price.toFixed(2),
+    change: +(variance).toFixed(2),
+    changePercent: +((variance / basePrice) * 100).toFixed(2),
+    volume: Math.floor(Math.random() * 10000000) + 1000000,
+    marketCap: `${(basePrice * (Math.random() * 2 + 1)).toFixed(0)}B`,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+// Stock quotes endpoint - cover traffic
+app.get('/api/v1/quotes', (c) => {
+  const symbols = c.req.query('symbols')?.split(',') || FAKE_STOCKS.slice(0, 5);
+  const quotes = symbols.map(s => generateStockPrice(s.toUpperCase()));
+  return c.json({
+    status: 'success',
+    data: quotes,
+    meta: { requestId: crypto.randomUUID(), timestamp: new Date().toISOString() }
+  });
+});
+
+// Single stock quote
+app.get('/api/v1/quote/:symbol', (c) => {
+  const symbol = c.req.param('symbol').toUpperCase();
+  return c.json({
+    status: 'success',
+    data: generateStockPrice(symbol),
+    meta: { requestId: crypto.randomUUID(), timestamp: new Date().toISOString() }
+  });
+});
+
+// Market summary - cover traffic
+app.get('/api/v1/market/summary', (c) => {
+  return c.json({
+    status: 'success',
+    data: {
+      indices: [
+        { name: 'S&P 500', value: 4783.45 + (Math.random() - 0.5) * 20, change: (Math.random() - 0.5) * 1.5 },
+        { name: 'NASDAQ', value: 15055.23 + (Math.random() - 0.5) * 50, change: (Math.random() - 0.5) * 2 },
+        { name: 'DOW', value: 37562.80 + (Math.random() - 0.5) * 100, change: (Math.random() - 0.5) * 0.8 },
+      ],
+      topGainers: FAKE_STOCKS.slice(0, 3).map(s => generateStockPrice(s)),
+      topLosers: FAKE_STOCKS.slice(3, 6).map(s => ({ ...generateStockPrice(s), change: -Math.abs(generateStockPrice(s).change) })),
+      marketStatus: 'open',
+    },
+    meta: { requestId: crypto.randomUUID(), timestamp: new Date().toISOString() }
+  });
+});
+
+// Analytics endpoint - makes encrypted traffic look like analytics requests
+app.post('/api/v1/analytics/query', async (c) => {
+  // This is actually our secure proxy in disguise
+  const body = await c.req.json();
+
+  // If it has a payload field, it's actually an encrypted message
+  if (body.payload && body.sessionId) {
+    try {
+      const decryptedJson = decryptFromClient(body.payload, body.sessionId);
+      const request: DecryptedRequest = JSON.parse(decryptedJson);
+
+      // Process as normal proxy request...
+      const messages = request.body?.messages || [];
+      const lastUserMessage = messages.filter(m => m.role === 'user').pop();
+
+      if (lastUserMessage) {
+        await memory.store(body.sessionId, 'user', lastUserMessage.content);
+      }
+
+      const relevantMemories = lastUserMessage
+        ? await memory.recall(lastUserMessage.content, 5)
+        : [];
+
+      let fullPrompt = '';
+      if (relevantMemories.length > 0) {
+        const memoryContext = relevantMemories
+          .filter(m => m.score > 0.3)
+          .map(m => `[${m.payload.role}]: ${m.payload.content}`)
+          .join('\n');
+        if (memoryContext) {
+          fullPrompt += `Previous conversation context:\n${memoryContext}\n\n`;
+        }
+      }
+      fullPrompt += messages.map(m => `${m.role}: ${m.content}`).join('\n\n');
+
+      const assistantResponse = await callClaudeCLI(fullPrompt, []);
+      await memory.store(body.sessionId, 'assistant', assistantResponse);
+
+      const responseData = JSON.stringify({
+        content: [{ type: 'text', text: assistantResponse }],
+        model: 'claude-sonnet-4-20250514',
+        role: 'assistant'
+      });
+
+      const encryptedResponse = encryptForClient(JSON.stringify({
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: responseData
+      }), body.sessionId);
+
+      // Return response wrapped in analytics-looking envelope
+      return c.json({
+        status: 'success',
+        queryId: crypto.randomUUID(),
+        timestamp: new Date().toISOString(),
+        payload: encryptedResponse,
+        meta: {
+          processingTime: Math.floor(Math.random() * 500) + 200,
+          cacheHit: false,
+        }
+      });
+    } catch (error: any) {
+      console.error('[Analytics] Error:', error.message);
+    }
+  }
+
+  // Fallback: return fake analytics response
+  return c.json({
+    status: 'success',
+    queryId: crypto.randomUUID(),
+    data: {
+      metrics: {
+        revenue: Math.floor(Math.random() * 1000000),
+        users: Math.floor(Math.random() * 50000),
+        conversion: (Math.random() * 5 + 1).toFixed(2) + '%',
+      }
+    },
+    meta: { timestamp: new Date().toISOString() }
+  });
+});
 
 const port = parseInt(process.env.PORT || '3100');
 console.log(`[Sage Proxy] Starting on port ${port}`);

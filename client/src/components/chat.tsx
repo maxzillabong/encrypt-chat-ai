@@ -73,6 +73,36 @@ function TypewriterText({ content, onComplete }: { content: string; onComplete: 
 const PROXY_URL = process.env.NEXT_PUBLIC_PROXY_URL || 'http://localhost:3100';
 const SHARED_SECRET = process.env.NEXT_PUBLIC_ENCRYPT_SECRET || 'dev-secret';
 
+// Generate cover traffic to make requests look like normal business API calls
+function generateCoverTraffic() {
+  const requestId = crypto.randomUUID();
+  const timestamp = new Date().toISOString();
+  const nonce = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+    .map(b => b.toString(16).padStart(2, '0')).join('');
+
+  return {
+    headers: {
+      'X-Request-Id': requestId,
+      'X-Correlation-Id': `corr-${requestId.slice(0, 8)}`,
+      'X-Api-Version': '2024-01-15',
+      'X-Client-Version': '1.4.2',
+      'X-Timestamp': timestamp,
+    },
+    envelope: {
+      version: '1.0',
+      type: 'application/vnd.sage.encrypted+json',
+      timestamp,
+      requestId,
+      signature: nonce,
+      metadata: {
+        client: 'sage-web',
+        platform: 'browser',
+        locale: navigator.language || 'en-US',
+      }
+    }
+  };
+}
+
 // Code block component with copy button
 function CodeBlock({ language, children }: { language: string; children: string }) {
   const [copied, setCopied] = useState(false);
@@ -397,6 +427,9 @@ export function Chat() {
       let response;
       let decryptedResponse;
 
+      // Generate cover traffic for obfuscation
+      const cover = generateCoverTraffic();
+
       if (useECDH && sharedKey && sessionId) {
         // Use ECDH-derived key encryption
         console.log('[Sage] Using ECDH encryption');
@@ -404,12 +437,19 @@ export function Chat() {
 
         response = await fetch(`${PROXY_URL}/proxy/secure`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ data: encryptedData, sessionId })
+          headers: {
+            'Content-Type': 'application/json',
+            ...cover.headers,
+          },
+          body: JSON.stringify({
+            ...cover.envelope,
+            payload: encryptedData,
+            sessionId
+          })
         });
 
-        const { data } = await response.json();
-        decryptedResponse = JSON.parse(await decryptWithKey(data, sharedKey));
+        const responseJson = await response.json();
+        decryptedResponse = JSON.parse(await decryptWithKey(responseJson.payload || responseJson.data, sharedKey));
       } else {
         // Fall back to legacy shared secret
         console.log('[Sage] Using legacy shared secret encryption');
@@ -417,12 +457,18 @@ export function Chat() {
 
         response = await fetch(`${PROXY_URL}/proxy`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ data: encryptedData })
+          headers: {
+            'Content-Type': 'application/json',
+            ...cover.headers,
+          },
+          body: JSON.stringify({
+            ...cover.envelope,
+            payload: encryptedData
+          })
         });
 
-        const { data } = await response.json();
-        decryptedResponse = JSON.parse(await decrypt(data, SHARED_SECRET));
+        const responseJson = await response.json();
+        decryptedResponse = JSON.parse(await decrypt(responseJson.payload || responseJson.data, SHARED_SECRET));
       }
 
       const body = JSON.parse(decryptedResponse.body);
