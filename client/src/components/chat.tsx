@@ -76,7 +76,7 @@ function CodeBlock({ language, children }: { language: string; children: string 
   };
 
   return (
-    <div className="relative group my-3 -mx-4">
+    <div className="relative group my-3 rounded-lg overflow-hidden" style={{ background: '#1a1a1a' }}>
       <div className="absolute right-2 top-2 z-10">
         <button
           onClick={handleCopy}
@@ -96,11 +96,13 @@ function CodeBlock({ language, children }: { language: string; children: string 
         PreTag="div"
         customStyle={{
           margin: 0,
-          borderRadius: 0,
+          borderRadius: '0.5rem',
           paddingTop: language ? '2rem' : '1rem',
           paddingLeft: '1rem',
           paddingRight: '1rem',
-          background: '#1e1e1e',
+          paddingBottom: '1rem',
+          background: '#1a1a1a',
+          overflow: 'auto',
         }}
       >
         {children}
