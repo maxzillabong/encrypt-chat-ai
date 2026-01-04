@@ -372,7 +372,7 @@ export function Chat() {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-gradient-to-b from-zinc-950 via-zinc-900 to-zinc-950">
+    <div className="flex flex-col h-screen bg-black">
       {/* Header */}
       <motion.header
         initial={{ opacity: 0, y: -20 }}
