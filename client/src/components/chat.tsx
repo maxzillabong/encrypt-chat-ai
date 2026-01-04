@@ -8,6 +8,14 @@ import { Card } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { encrypt, decrypt } from '@/lib/crypto';
+import {
+  getOrCreateKeyPair,
+  getPublicKeyBase64,
+  importServerPublicKey,
+  deriveSharedSecret,
+  encryptWithKey,
+  decryptWithKey,
+} from '@/lib/keys';
 import { Send, Lock, Loader2, Sparkles, Copy, Check, Paperclip, X, FileText, Image as ImageIcon, FileSpreadsheet } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -203,6 +211,9 @@ export function Chat() {
   const [isLoading, setIsLoading] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sharedKey, setSharedKey] = useState<CryptoKey | null>(null);
+  const [useECDH, setUseECDH] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -220,11 +231,61 @@ export function Chat() {
     'text/csv': 'text',
   } as const;
 
+  // Initialize ECDH key exchange
   useEffect(() => {
-    // Check proxy connection
-    fetch(`${PROXY_URL}/health`)
-      .then(res => res.ok && setIsConnected(true))
-      .catch(() => setIsConnected(false));
+    async function initKeyExchange() {
+      try {
+        // First check if server is healthy
+        const healthRes = await fetch(`${PROXY_URL}/health`);
+        if (!healthRes.ok) {
+          console.log('[Sage] Server not available');
+          setIsConnected(false);
+          return;
+        }
+
+        const health = await healthRes.json();
+        console.log('[Sage] Server health:', health);
+
+        // Generate or load client key pair
+        console.log('[Sage] Initializing ECDH key exchange...');
+        const keyPair = await getOrCreateKeyPair();
+        const clientPublicKey = await getPublicKeyBase64(keyPair);
+
+        // Exchange keys with server
+        const exchangeRes = await fetch(`${PROXY_URL}/key-exchange`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clientPublicKey }),
+        });
+
+        if (!exchangeRes.ok) {
+          console.log('[Sage] Key exchange failed, falling back to shared secret');
+          setIsConnected(true);
+          setUseECDH(false);
+          return;
+        }
+
+        const { serverPublicKey, sessionId: sid } = await exchangeRes.json();
+
+        // Derive shared secret
+        const serverKey = await importServerPublicKey(serverPublicKey);
+        const derivedKey = await deriveSharedSecret(keyPair.privateKey, serverKey);
+
+        setSessionId(sid);
+        setSharedKey(derivedKey);
+        setUseECDH(true);
+        setIsConnected(true);
+
+        console.log('[Sage] ECDH key exchange complete, session:', sid.slice(0, 8) + '...');
+      } catch (error) {
+        console.error('[Sage] Key exchange error:', error);
+        // Fall back to legacy shared secret
+        setIsConnected(true);
+        setUseECDH(false);
+      }
+    }
+
+    initKeyExchange();
   }, []);
 
   useEffect(() => {
@@ -333,20 +394,37 @@ export function Chat() {
         })),
       };
 
-      // Encrypt the request
-      const encryptedData = await encrypt(JSON.stringify(apiRequest), SHARED_SECRET);
+      let response;
+      let decryptedResponse;
 
-      // Send to proxy
-      const response = await fetch(`${PROXY_URL}/proxy`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: encryptedData })
-      });
+      if (useECDH && sharedKey && sessionId) {
+        // Use ECDH-derived key encryption
+        console.log('[Sage] Using ECDH encryption');
+        const encryptedData = await encryptWithKey(JSON.stringify(apiRequest), sharedKey);
 
-      const { data } = await response.json();
+        response = await fetch(`${PROXY_URL}/proxy/secure`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data: encryptedData, sessionId })
+        });
 
-      // Decrypt response
-      const decryptedResponse = JSON.parse(await decrypt(data, SHARED_SECRET));
+        const { data } = await response.json();
+        decryptedResponse = JSON.parse(await decryptWithKey(data, sharedKey));
+      } else {
+        // Fall back to legacy shared secret
+        console.log('[Sage] Using legacy shared secret encryption');
+        const encryptedData = await encrypt(JSON.stringify(apiRequest), SHARED_SECRET);
+
+        response = await fetch(`${PROXY_URL}/proxy`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data: encryptedData })
+        });
+
+        const { data } = await response.json();
+        decryptedResponse = JSON.parse(await decrypt(data, SHARED_SECRET));
+      }
+
       const body = JSON.parse(decryptedResponse.body);
 
       const assistantMessage: Message = {
@@ -399,7 +477,7 @@ export function Chat() {
               <Lock className={`w-4 h-4 ${isConnected ? 'text-emerald-400' : 'text-zinc-600'}`} />
             </motion.div>
             <span className="text-xs text-zinc-500">
-              {isConnected ? 'E2E Encrypted' : 'Disconnected'}
+              {isConnected ? (useECDH ? 'ECDH Encrypted' : 'AES Encrypted') : 'Disconnected'}
             </span>
           </div>
         </div>
@@ -626,7 +704,7 @@ export function Chat() {
             </Button>
           </form>
           <p className="text-xs text-zinc-600 mt-2 text-center">
-            Messages encrypted with AES-256-GCM before leaving your device
+            {useECDH ? 'Signal-style ECDH key exchange • AES-256-GCM encryption' : 'Messages encrypted with AES-256-GCM before leaving your device'}
           </p>
         </div>
       </motion.div>

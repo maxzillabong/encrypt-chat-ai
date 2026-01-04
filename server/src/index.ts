@@ -4,6 +4,13 @@ import { cors } from 'hono/cors';
 import { spawn } from 'child_process';
 import { decryptFromBase64, encryptToBase64 } from './crypto.js';
 import { memory } from './memory.js';
+import {
+  initServerKeys,
+  getServerPublicKey,
+  performKeyExchange,
+  encryptForClient,
+  decryptFromClient,
+} from './keys.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -12,7 +19,10 @@ const app = new Hono();
 // Enable CORS for local development
 app.use('/*', cors());
 
-// Shared secret - in production, load from env
+// Initialize server ECDH keys
+initServerKeys();
+
+// Legacy shared secret (will be deprecated)
 const SHARED_SECRET = process.env.ENCRYPT_CHAT_SECRET || 'change-me-in-production';
 
 // File processing interface
@@ -349,7 +359,123 @@ app.post('/proxy/stream', async (c) => {
 });
 
 // Health check (unencrypted, just for monitoring)
-app.get('/health', (c) => c.json({ status: 'ok', service: 'sage-proxy' }));
+// Key exchange endpoint - client sends public key, server responds with its public key
+app.post('/key-exchange', async (c) => {
+  try {
+    const { clientPublicKey } = await c.req.json<{ clientPublicKey: string }>();
+
+    if (!clientPublicKey) {
+      return c.json({ error: 'Missing clientPublicKey' }, 400);
+    }
+
+    // Perform ECDH key exchange
+    const sessionId = performKeyExchange(clientPublicKey);
+    const serverPublicKey = getServerPublicKey();
+
+    console.log(`[KeyExchange] New session established: ${sessionId.slice(0, 8)}...`);
+
+    return c.json({
+      serverPublicKey,
+      sessionId,
+    });
+  } catch (error: any) {
+    console.error('[KeyExchange] Error:', error.message);
+    return c.json({ error: 'Key exchange failed' }, 500);
+  }
+});
+
+// New secure proxy endpoint using ECDH-derived keys
+app.post('/proxy/secure', async (c) => {
+  try {
+    const { data, sessionId } = await c.req.json<{ data: string; sessionId: string }>();
+
+    if (!sessionId) {
+      return c.json({ error: 'Missing sessionId - perform key exchange first' }, 400);
+    }
+
+    // Decrypt using ECDH-derived key
+    const decryptedJson = decryptFromClient(data, sessionId);
+    const request: DecryptedRequest = JSON.parse(decryptedJson);
+
+    console.log(`[Proxy/Secure] ${request.method} ${request.endpoint}`);
+
+    // Process files if present
+    const files = request.files || [];
+    const imagePaths: string[] = [];
+    let fileContext = '';
+
+    if (files.length > 0) {
+      console.log(`[Proxy/Secure] Processing ${files.length} files...`);
+
+      for (const file of files) {
+        if (file.type.startsWith('image/')) {
+          const imgPath = saveImageToTemp(file);
+          imagePaths.push(imgPath);
+        } else {
+          const content = await extractFileContent(file);
+          fileContext += content;
+        }
+      }
+    }
+
+    // Build the prompt
+    const messages = request.body?.messages || [];
+    const lastUserMessage = messages.filter(m => m.role === 'user').pop();
+
+    if (lastUserMessage) {
+      await memory.store(sessionId, 'user', lastUserMessage.content);
+    }
+
+    const relevantMemories = lastUserMessage
+      ? await memory.recall(lastUserMessage.content, 5)
+      : [];
+
+    let fullPrompt = '';
+
+    if (relevantMemories.length > 0) {
+      const memoryContext = relevantMemories
+        .filter(m => m.score > 0.3)
+        .map(m => `[${m.payload.role}]: ${m.payload.content}`)
+        .join('\n');
+
+      if (memoryContext) {
+        fullPrompt += `Previous conversation context:\n${memoryContext}\n\n`;
+      }
+    }
+
+    if (fileContext) {
+      fullPrompt += `Attached documents:\n${fileContext}\n\n`;
+    }
+
+    fullPrompt += messages.map(m => `${m.role}: ${m.content}`).join('\n\n');
+
+    console.log(`[Proxy/Secure] Calling Claude CLI...`);
+
+    const assistantResponse = await callClaudeCLI(fullPrompt, imagePaths);
+    await memory.store(sessionId, 'assistant', assistantResponse);
+
+    const responseData = JSON.stringify({
+      content: [{ type: 'text', text: assistantResponse }],
+      model: request.body?.model || 'claude-sonnet-4-20250514',
+      role: 'assistant'
+    });
+
+    // Encrypt response using ECDH-derived key
+    const encryptedResponse = encryptForClient(JSON.stringify({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: responseData
+    }), sessionId);
+
+    return c.json({ data: encryptedResponse });
+  } catch (error: any) {
+    console.error('[Proxy/Secure] Error:', error.message);
+    return c.json({ error: 'Secure proxy error' }, 500);
+  }
+});
+
+// Health check (unencrypted, just for monitoring)
+app.get('/health', (c) => c.json({ status: 'ok', service: 'sage-proxy', encryption: 'ecdh' }));
 
 const port = parseInt(process.env.PORT || '3100');
 console.log(`[Sage Proxy] Starting on port ${port}`);
