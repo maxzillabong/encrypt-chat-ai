@@ -8,7 +8,11 @@ import { Card } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { encrypt, decrypt } from '@/lib/crypto';
-import { Send, Lock, Loader2, Sparkles } from 'lucide-react';
+import { Send, Lock, Loader2, Sparkles, Copy, Check } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { oneDark } from 'react-syntax-highlighter/dist/cjs/styles/prism';
 
 interface Message {
   id: string;
@@ -19,6 +23,129 @@ interface Message {
 
 const PROXY_URL = process.env.NEXT_PUBLIC_PROXY_URL || 'http://localhost:3100';
 const SHARED_SECRET = process.env.NEXT_PUBLIC_ENCRYPT_SECRET || 'dev-secret';
+
+// Code block component with copy button
+function CodeBlock({ language, children }: { language: string; children: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(children);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="relative group my-3">
+      <div className="absolute right-2 top-2 z-10">
+        <button
+          onClick={handleCopy}
+          className="p-1.5 rounded bg-zinc-700 hover:bg-zinc-600 text-zinc-300 opacity-0 group-hover:opacity-100 transition-opacity"
+        >
+          {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
+        </button>
+      </div>
+      {language && (
+        <div className="absolute left-3 top-2 text-xs text-zinc-500 font-mono">
+          {language}
+        </div>
+      )}
+      <SyntaxHighlighter
+        style={oneDark}
+        language={language || 'text'}
+        PreTag="div"
+        customStyle={{
+          margin: 0,
+          borderRadius: '0.5rem',
+          paddingTop: language ? '2rem' : '1rem',
+        }}
+      >
+        {children}
+      </SyntaxHighlighter>
+    </div>
+  );
+}
+
+// Markdown renderer component
+function MarkdownContent({ content }: { content: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        code({ className, children, ...props }) {
+          const match = /language-(\w+)/.exec(className || '');
+          const isInline = !match && !String(children).includes('\n');
+
+          if (isInline) {
+            return (
+              <code className="px-1.5 py-0.5 rounded bg-zinc-700 text-violet-300 text-sm font-mono" {...props}>
+                {children}
+              </code>
+            );
+          }
+
+          return (
+            <CodeBlock language={match?.[1] || ''}>
+              {String(children).replace(/\n$/, '')}
+            </CodeBlock>
+          );
+        },
+        p({ children }) {
+          return <p className="mb-3 last:mb-0">{children}</p>;
+        },
+        ul({ children }) {
+          return <ul className="list-disc list-inside mb-3 space-y-1">{children}</ul>;
+        },
+        ol({ children }) {
+          return <ol className="list-decimal list-inside mb-3 space-y-1">{children}</ol>;
+        },
+        li({ children }) {
+          return <li className="text-zinc-200">{children}</li>;
+        },
+        h1({ children }) {
+          return <h1 className="text-xl font-bold mb-3 text-zinc-100">{children}</h1>;
+        },
+        h2({ children }) {
+          return <h2 className="text-lg font-semibold mb-2 text-zinc-100">{children}</h2>;
+        },
+        h3({ children }) {
+          return <h3 className="text-base font-semibold mb-2 text-zinc-100">{children}</h3>;
+        },
+        blockquote({ children }) {
+          return (
+            <blockquote className="border-l-4 border-violet-500 pl-4 my-3 text-zinc-400 italic">
+              {children}
+            </blockquote>
+          );
+        },
+        a({ href, children }) {
+          return (
+            <a href={href} target="_blank" rel="noopener noreferrer" className="text-violet-400 hover:text-violet-300 underline">
+              {children}
+            </a>
+          );
+        },
+        table({ children }) {
+          return (
+            <div className="overflow-x-auto my-3">
+              <table className="min-w-full border border-zinc-700 rounded">{children}</table>
+            </div>
+          );
+        },
+        th({ children }) {
+          return <th className="px-3 py-2 bg-zinc-800 border border-zinc-700 text-left font-semibold">{children}</th>;
+        },
+        td({ children }) {
+          return <td className="px-3 py-2 border border-zinc-700">{children}</td>;
+        },
+        hr() {
+          return <hr className="my-4 border-zinc-700" />;
+        },
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  );
+}
 
 // Debug logging
 console.log('[Sage] Proxy URL:', PROXY_URL);
@@ -201,9 +328,15 @@ export function Chat() {
                     ? 'bg-violet-600 text-white border-violet-500'
                     : 'bg-zinc-800/50 border-zinc-700 text-zinc-100'
                 }`}>
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed">
-                    {message.content}
-                  </p>
+                  {message.role === 'assistant' ? (
+                    <div className="text-sm leading-relaxed prose prose-invert prose-sm max-w-none">
+                      <MarkdownContent content={message.content} />
+                    </div>
+                  ) : (
+                    <p className="whitespace-pre-wrap text-sm leading-relaxed">
+                      {message.content}
+                    </p>
+                  )}
                 </Card>
                 {message.role === 'user' && (
                   <Avatar className="w-8 h-8 border border-zinc-700">
