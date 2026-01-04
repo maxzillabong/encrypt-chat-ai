@@ -14,26 +14,32 @@ app.use('/*', cors());
 const SHARED_SECRET = process.env.ENCRYPT_CHAT_SECRET || 'change-me-in-production';
 
 // Call Claude using CLI (uses OAuth token from server)
-async function callClaudeCLI(prompt: string, model?: string): Promise<string> {
+async function callClaudeCLI(prompt: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const args = ['-p', '--output-format', 'text'];
-    if (model) {
-      args.push('--model', model.replace('claude-', '').replace(/-\d+$/, ''));
-    }
-    args.push(prompt);
+    const args = ['-p', '--output-format', 'text', prompt];
+
+    console.log('[Claude CLI] Spawning with args:', args.slice(0, 3));
 
     const proc = spawn('claude', args, {
       env: { ...process.env },
-      stdio: ['pipe', 'pipe', 'pipe']
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 120000 // 2 minute timeout
     });
 
     let stdout = '';
     let stderr = '';
 
-    proc.stdout.on('data', (data) => { stdout += data.toString(); });
-    proc.stderr.on('data', (data) => { stderr += data.toString(); });
+    proc.stdout.on('data', (data) => {
+      stdout += data.toString();
+      console.log('[Claude CLI] stdout chunk:', data.toString().slice(0, 100));
+    });
+    proc.stderr.on('data', (data) => {
+      stderr += data.toString();
+      console.log('[Claude CLI] stderr:', data.toString().slice(0, 200));
+    });
 
     proc.on('close', (code) => {
+      console.log('[Claude CLI] Process closed with code:', code);
       if (code === 0) {
         resolve(stdout.trim());
       } else {
@@ -41,7 +47,10 @@ async function callClaudeCLI(prompt: string, model?: string): Promise<string> {
       }
     });
 
-    proc.on('error', reject);
+    proc.on('error', (err) => {
+      console.log('[Claude CLI] Process error:', err.message);
+      reject(err);
+    });
   });
 }
 
@@ -107,7 +116,7 @@ app.post('/proxy', async (c) => {
     console.log(`[Proxy] Calling Claude CLI...`);
 
     // Call Claude using CLI with OAuth token
-    const assistantResponse = await callClaudeCLI(fullPrompt, request.body?.model);
+    const assistantResponse = await callClaudeCLI(fullPrompt);
 
     // Store assistant response in memory
     await memory.store(sessionId, 'assistant', assistantResponse);
