@@ -87,12 +87,14 @@ export function Chat() {
 
       // Decrypt response
       const decryptedResponse = JSON.parse(await decrypt(data, SHARED_SECRET));
+      console.log('[Sage] Decrypted response:', decryptedResponse);
       const body = JSON.parse(decryptedResponse.body);
+      console.log('[Sage] Body:', body);
 
       const assistantMessage: Message = {
         id: crypto.randomUUID(),
         role: 'assistant',
-        content: body.content?.[0]?.text || 'No response',
+        content: body.content?.[0]?.text || body.error?.message || JSON.stringify(body),
         timestamp: new Date()
       };
 

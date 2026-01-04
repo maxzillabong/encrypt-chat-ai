@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
 import { cors } from 'hono/cors';
+import { spawn } from 'child_process';
 import { decryptFromBase64, encryptToBase64 } from './crypto.js';
 import { memory } from './memory.js';
 
@@ -11,15 +12,37 @@ app.use('/*', cors());
 
 // Shared secret - in production, load from env
 const SHARED_SECRET = process.env.ENCRYPT_CHAT_SECRET || 'change-me-in-production';
-const CLAUDE_API_URL = process.env.CLAUDE_API_URL || 'https://api.anthropic.com';
-const CLAUDE_API_KEY = process.env.ANTHROPIC_API_KEY || '';
-const AUTH_TYPE = process.env.AUTH_TYPE || 'x-api-key'; // 'x-api-key' or 'bearer'
 
-function getAuthHeaders(): Record<string, string> {
-  if (AUTH_TYPE === 'bearer') {
-    return { 'Authorization': `Bearer ${CLAUDE_API_KEY}` };
-  }
-  return { 'x-api-key': CLAUDE_API_KEY, 'anthropic-version': '2023-06-01' };
+// Call Claude using CLI (uses OAuth token from server)
+async function callClaudeCLI(prompt: string, model?: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const args = ['-p', '--output-format', 'text'];
+    if (model) {
+      args.push('--model', model.replace('claude-', '').replace(/-\d+$/, ''));
+    }
+    args.push(prompt);
+
+    const proc = spawn('claude', args, {
+      env: { ...process.env },
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    proc.stdout.on('data', (data) => { stdout += data.toString(); });
+    proc.stderr.on('data', (data) => { stderr += data.toString(); });
+
+    proc.on('close', (code) => {
+      if (code === 0) {
+        resolve(stdout.trim());
+      } else {
+        reject(new Error(stderr || `Claude CLI exited with code ${code}`));
+      }
+    });
+
+    proc.on('error', reject);
+  });
 }
 
 interface EncryptedPayload {
@@ -50,69 +73,56 @@ app.post('/proxy', async (c) => {
 
     console.log(`[Proxy] ${request.method} ${request.endpoint}`);
 
-    // If this is a messages request, add memory context
-    if (request.endpoint === '/v1/messages' && request.body?.messages) {
-      const lastUserMessage = request.body.messages
-        .filter(m => m.role === 'user')
-        .pop();
+    // Build the prompt from messages
+    const messages = request.body?.messages || [];
+    const lastUserMessage = messages.filter(m => m.role === 'user').pop();
 
-      if (lastUserMessage) {
-        // Store the user message
-        await memory.store(sessionId, 'user', lastUserMessage.content);
+    if (lastUserMessage) {
+      // Store the user message
+      await memory.store(sessionId, 'user', lastUserMessage.content);
+    }
 
-        // Recall relevant context
-        const relevantMemories = await memory.recall(lastUserMessage.content, 5);
+    // Recall relevant context
+    const relevantMemories = lastUserMessage
+      ? await memory.recall(lastUserMessage.content, 5)
+      : [];
 
-        if (relevantMemories.length > 0) {
-          const memoryContext = relevantMemories
-            .filter(m => m.score > 0.3) // Only include relevant memories
-            .map(m => `[${m.payload.role}]: ${m.payload.content}`)
-            .join('\n');
+    // Build full prompt with context
+    let fullPrompt = '';
 
-          if (memoryContext) {
-            // Prepend memory context to system prompt
-            const existingSystem = request.body.system || '';
-            request.body.system = `You are Sage, a wise and helpful AI assistant. You have memory of past conversations.
+    if (relevantMemories.length > 0) {
+      const memoryContext = relevantMemories
+        .filter(m => m.score > 0.3)
+        .map(m => `[${m.payload.role}]: ${m.payload.content}`)
+        .join('\n');
 
-Here are relevant memories from previous conversations:
-${memoryContext}
-
-${existingSystem}`;
-          }
-        }
+      if (memoryContext) {
+        fullPrompt += `Previous conversation context:\n${memoryContext}\n\n`;
       }
     }
 
-    // Forward to Claude API
-    const response = await fetch(`${CLAUDE_API_URL}${request.endpoint}`, {
-      method: request.method,
-      headers: {
-        'Content-Type': 'application/json',
-        ...getAuthHeaders(),
-        ...request.headers
-      },
-      body: request.body ? JSON.stringify(request.body) : undefined
-    });
+    // Add conversation history
+    fullPrompt += messages.map(m => `${m.role}: ${m.content}`).join('\n\n');
 
-    const responseData = await response.text();
+    console.log(`[Proxy] Calling Claude CLI...`);
+
+    // Call Claude using CLI with OAuth token
+    const assistantResponse = await callClaudeCLI(fullPrompt, request.body?.model);
 
     // Store assistant response in memory
-    if (request.endpoint === '/v1/messages' && response.ok) {
-      try {
-        const parsed = JSON.parse(responseData);
-        const assistantContent = parsed.content?.[0]?.text;
-        if (assistantContent) {
-          await memory.store(sessionId, 'assistant', assistantContent);
-        }
-      } catch (e) {
-        // Ignore parsing errors
-      }
-    }
+    await memory.store(sessionId, 'assistant', assistantResponse);
+
+    // Format response like Claude API
+    const responseData = JSON.stringify({
+      content: [{ type: 'text', text: assistantResponse }],
+      model: request.body?.model || 'claude-sonnet-4-20250514',
+      role: 'assistant'
+    });
 
     // Encrypt the response
     const encryptedResponse = encryptToBase64(JSON.stringify({
-      status: response.status,
-      headers: Object.fromEntries(response.headers.entries()),
+      status: 200,
+      headers: { 'content-type': 'application/json' },
       body: responseData
     }), SHARED_SECRET);
 
@@ -130,70 +140,12 @@ ${existingSystem}`;
   }
 });
 
-// Streaming endpoint for chat completions
-app.post('/proxy/stream', async (c) => {
-  try {
-    const { data } = await c.req.json<EncryptedPayload>();
-
-    // Decrypt the incoming request
-    const decryptedJson = decryptFromBase64(data, SHARED_SECRET);
-    const request: DecryptedRequest = JSON.parse(decryptedJson);
-
-    console.log(`[Proxy/Stream] ${request.method} ${request.endpoint}`);
-
-    // Forward to Claude API with streaming
-    const response = await fetch(`${CLAUDE_API_URL}${request.endpoint}`, {
-      method: request.method,
-      headers: {
-        'Content-Type': 'application/json',
-        ...getAuthHeaders(),
-        ...request.headers
-      },
-      body: request.body ? JSON.stringify(request.body) : undefined
-    });
-
-    if (!response.body) {
-      throw new Error('No response body');
-    }
-
-    // For streaming, we encrypt each chunk
-    const reader = response.body.getReader();
-    const encoder = new TextEncoder();
-
-    const stream = new ReadableStream({
-      async pull(controller) {
-        const { done, value } = await reader.read();
-
-        if (done) {
-          controller.close();
-          return;
-        }
-
-        // Encrypt each chunk
-        const chunk = new TextDecoder().decode(value);
-        const encryptedChunk = encryptToBase64(chunk, SHARED_SECRET);
-        controller.enqueue(encoder.encode(encryptedChunk + '\n'));
-      }
-    });
-
-    return new Response(stream, {
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive'
-      }
-    });
-  } catch (error) {
-    console.error('[Proxy/Stream] Error:', error);
-    return c.json({ error: 'Stream proxy error' }, 500);
-  }
-});
 
 // Health check (unencrypted, just for monitoring)
 app.get('/health', (c) => c.json({ status: 'ok', service: 'sage-proxy' }));
 
 const port = parseInt(process.env.PORT || '3100');
 console.log(`[Sage Proxy] Starting on port ${port}`);
-console.log(`[Sage Proxy] Claude API: ${CLAUDE_API_URL}`);
+console.log(`[Sage Proxy] Using Claude CLI with OAuth token`);
 
 serve({ fetch: app.fetch, port });
