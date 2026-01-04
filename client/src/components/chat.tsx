@@ -8,11 +8,20 @@ import { Card } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { encrypt, decrypt } from '@/lib/crypto';
-import { Send, Lock, Loader2, Sparkles, Copy, Check } from 'lucide-react';
+import { Send, Lock, Loader2, Sparkles, Copy, Check, Paperclip, X, FileText, Image as ImageIcon, FileSpreadsheet } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/cjs/styles/prism';
+
+interface AttachedFile {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+  data: string; // base64
+  preview?: string; // for images
+}
 
 interface Message {
   id: string;
@@ -20,6 +29,7 @@ interface Message {
   content: string;
   timestamp: Date;
   isTyping?: boolean;
+  files?: AttachedFile[];
 }
 
 // Typewriter effect for simulated streaming
@@ -190,7 +200,23 @@ export function Chat() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const SUPPORTED_TYPES = {
+    'image/png': 'image',
+    'image/jpeg': 'image',
+    'image/gif': 'image',
+    'image/webp': 'image',
+    'application/pdf': 'pdf',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'word',
+    'application/msword': 'word',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'excel',
+    'application/vnd.ms-excel': 'excel',
+    'text/plain': 'text',
+    'text/csv': 'text',
+  } as const;
 
   useEffect(() => {
     // Check proxy connection
@@ -213,18 +239,75 @@ export function Chat() {
     );
   }, []);
 
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+
+    for (const file of Array.from(files)) {
+      if (!(file.type in SUPPORTED_TYPES)) {
+        alert(`Unsupported file type: ${file.type}`);
+        continue;
+      }
+
+      if (file.size > 20 * 1024 * 1024) { // 20MB limit
+        alert(`File too large: ${file.name} (max 20MB)`);
+        continue;
+      }
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = (reader.result as string).split(',')[1];
+        const newFile: AttachedFile = {
+          id: crypto.randomUUID(),
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          data: base64,
+          preview: file.type.startsWith('image/') ? reader.result as string : undefined,
+        };
+        setAttachedFiles(prev => [...prev, newFile]);
+      };
+      reader.readAsDataURL(file);
+    }
+
+    // Reset input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const removeFile = (id: string) => {
+    setAttachedFiles(prev => prev.filter(f => f.id !== id));
+  };
+
+  const getFileIcon = (type: string) => {
+    if (type.startsWith('image/')) return <ImageIcon className="w-4 h-4" />;
+    if (type.includes('pdf')) return <FileText className="w-4 h-4 text-red-400" />;
+    if (type.includes('word')) return <FileText className="w-4 h-4 text-blue-400" />;
+    if (type.includes('excel') || type.includes('spreadsheet')) return <FileSpreadsheet className="w-4 h-4 text-green-400" />;
+    return <FileText className="w-4 h-4" />;
+  };
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
   const sendMessage = async () => {
-    if (!input.trim() || isLoading) return;
+    if ((!input.trim() && attachedFiles.length === 0) || isLoading) return;
 
     const userMessage: Message = {
       id: crypto.randomUUID(),
       role: 'user',
       content: input.trim(),
-      timestamp: new Date()
+      timestamp: new Date(),
+      files: attachedFiles.length > 0 ? [...attachedFiles] : undefined,
     };
 
     setMessages(prev => [...prev, userMessage]);
     setInput('');
+    setAttachedFiles([]);
     setIsLoading(true);
 
     try {
@@ -239,7 +322,13 @@ export function Chat() {
             role: m.role,
             content: m.content
           }))
-        }
+        },
+        // Include files separately for the proxy to handle
+        files: userMessage.files?.map(f => ({
+          name: f.name,
+          type: f.type,
+          data: f.data,
+        })),
       };
 
       // Encrypt the request
@@ -383,9 +472,27 @@ export function Chat() {
                       )}
                     </div>
                   ) : (
-                    <p className="whitespace-pre-wrap text-sm leading-relaxed">
-                      {message.content}
-                    </p>
+                    <div>
+                      {message.files && message.files.length > 0 && (
+                        <div className="flex flex-wrap gap-2 mb-2">
+                          {message.files.map(file => (
+                            <div key={file.id} className="flex items-center gap-1 bg-violet-700/50 rounded px-2 py-1">
+                              {file.preview ? (
+                                <img src={file.preview} alt={file.name} className="w-8 h-8 object-cover rounded" />
+                              ) : (
+                                getFileIcon(file.type)
+                              )}
+                              <span className="text-xs truncate max-w-[100px]">{file.name}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {message.content && (
+                        <p className="whitespace-pre-wrap text-sm leading-relaxed">
+                          {message.content}
+                        </p>
+                      )}
+                    </div>
                   )}
                 </Card>
                 {message.role === 'user' && (
@@ -442,10 +549,61 @@ export function Chat() {
         className="border-t border-zinc-800 bg-zinc-950/80 backdrop-blur-xl p-4"
       >
         <div className="max-w-4xl mx-auto">
+          {/* File previews */}
+          {attachedFiles.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-3">
+              {attachedFiles.map(file => (
+                <div
+                  key={file.id}
+                  className="relative group flex items-center gap-2 bg-zinc-800 rounded-lg px-3 py-2 border border-zinc-700"
+                >
+                  {file.preview ? (
+                    <img src={file.preview} alt={file.name} className="w-10 h-10 object-cover rounded" />
+                  ) : (
+                    getFileIcon(file.type)
+                  )}
+                  <div className="flex flex-col">
+                    <span className="text-xs text-zinc-300 truncate max-w-[120px]">{file.name}</span>
+                    <span className="text-xs text-zinc-500">{formatFileSize(file.size)}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeFile(file.id)}
+                    className="absolute -top-1 -right-1 p-0.5 bg-zinc-700 hover:bg-red-600 rounded-full transition-colors"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           <form
             onSubmit={(e) => { e.preventDefault(); sendMessage(); }}
             className="flex gap-3"
           >
+            {/* Hidden file input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+
+            {/* Attachment button */}
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isLoading || !isConnected}
+              className="border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200"
+            >
+              <Paperclip className="w-4 h-4" />
+            </Button>
+
             <Input
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -455,7 +613,7 @@ export function Chat() {
             />
             <Button
               type="submit"
-              disabled={isLoading || !input.trim() || !isConnected}
+              disabled={isLoading || (!input.trim() && attachedFiles.length === 0) || !isConnected}
               className="bg-violet-600 hover:bg-violet-500 text-white px-6"
             >
               {isLoading ? (

@@ -4,6 +4,8 @@ import { cors } from 'hono/cors';
 import { spawn } from 'child_process';
 import { decryptFromBase64, encryptToBase64 } from './crypto.js';
 import { memory } from './memory.js';
+import * as fs from 'fs';
+import * as path from 'path';
 
 const app = new Hono();
 
@@ -13,26 +15,103 @@ app.use('/*', cors());
 // Shared secret - in production, load from env
 const SHARED_SECRET = process.env.ENCRYPT_CHAT_SECRET || 'change-me-in-production';
 
+// File processing interface
+interface AttachedFile {
+  name: string;
+  type: string;
+  data: string; // base64
+}
+
+// Extract text from various file types
+async function extractFileContent(file: AttachedFile): Promise<string> {
+  const buffer = Buffer.from(file.data, 'base64');
+
+  try {
+    if (file.type.startsWith('image/')) {
+      // Images are handled separately via Claude CLI --image flag
+      return `[Image: ${file.name}]`;
+    }
+
+    if (file.type === 'application/pdf') {
+      const pdfParse = (await import('pdf-parse')).default;
+      const result = await pdfParse(buffer);
+      console.log(`[File] Extracted ${result.text.length} chars from PDF: ${file.name}`);
+      return `\n--- Content from ${file.name} ---\n${result.text}\n--- End of ${file.name} ---\n`;
+    }
+
+    if (file.type.includes('word') || file.name.endsWith('.docx') || file.name.endsWith('.doc')) {
+      const mammoth = await import('mammoth');
+      const result = await mammoth.extractRawText({ buffer });
+      console.log(`[File] Extracted ${result.value.length} chars from Word: ${file.name}`);
+      return `\n--- Content from ${file.name} ---\n${result.value}\n--- End of ${file.name} ---\n`;
+    }
+
+    if (file.type.includes('excel') || file.type.includes('spreadsheet') || file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
+      const XLSX = await import('xlsx');
+      const workbook = XLSX.read(buffer, { type: 'buffer' });
+      let text = '';
+      for (const sheetName of workbook.SheetNames) {
+        const sheet = workbook.Sheets[sheetName];
+        const csv = XLSX.utils.sheet_to_csv(sheet);
+        text += `\nSheet: ${sheetName}\n${csv}\n`;
+      }
+      console.log(`[File] Extracted ${text.length} chars from Excel: ${file.name}`);
+      return `\n--- Content from ${file.name} ---\n${text}\n--- End of ${file.name} ---\n`;
+    }
+
+    if (file.type.startsWith('text/') || file.name.endsWith('.txt') || file.name.endsWith('.csv')) {
+      const text = buffer.toString('utf-8');
+      console.log(`[File] Read ${text.length} chars from text file: ${file.name}`);
+      return `\n--- Content from ${file.name} ---\n${text}\n--- End of ${file.name} ---\n`;
+    }
+
+    return `[Unsupported file type: ${file.name}]`;
+  } catch (error: any) {
+    console.error(`[File] Error processing ${file.name}:`, error.message);
+    return `[Error reading ${file.name}: ${error.message}]`;
+  }
+}
+
+// Save image to temp file and return path
+function saveImageToTemp(file: AttachedFile): string {
+  const buffer = Buffer.from(file.data, 'base64');
+  const ext = file.type.split('/')[1] || 'png';
+  const tmpPath = `/tmp/image-${Date.now()}.${ext}`;
+  fs.writeFileSync(tmpPath, buffer);
+  return tmpPath;
+}
+
 // Call Claude using CLI (uses OAuth token from server)
-async function callClaudeCLI(prompt: string): Promise<string> {
+async function callClaudeCLI(prompt: string, imagePaths: string[] = []): Promise<string> {
   const { execSync } = await import('child_process');
 
-  console.log('[Claude CLI] Calling with prompt length:', prompt.length);
+  console.log('[Claude CLI] Calling with prompt length:', prompt.length, 'images:', imagePaths.length);
 
   try {
     // Write prompt to temp file to avoid argument length issues
-    const fs = await import('fs');
     const tmpFile = `/tmp/prompt-${Date.now()}.txt`;
     fs.writeFileSync(tmpFile, prompt);
 
-    const result = execSync(`claude -p --output-format text "$(cat ${tmpFile})"`, {
+    // Build command with optional image flags
+    let cmd = `claude -p --output-format text`;
+    for (const imgPath of imagePaths) {
+      cmd += ` --image "${imgPath}"`;
+    }
+    cmd += ` "$(cat ${tmpFile})"`;
+
+    const result = execSync(cmd, {
       encoding: 'utf8',
       timeout: 120000,
       maxBuffer: 10 * 1024 * 1024,
       env: process.env
     });
 
+    // Cleanup
     fs.unlinkSync(tmpFile);
+    for (const imgPath of imagePaths) {
+      try { fs.unlinkSync(imgPath); } catch (e) {}
+    }
+
     console.log('[Claude CLI] Got response length:', result.length);
     return result.trim();
   } catch (error: any) {
@@ -57,6 +136,7 @@ interface DecryptedRequest {
     messages?: Array<{ role: string; content: string }>;
     [key: string]: unknown;
   };
+  files?: AttachedFile[];
 }
 
 app.post('/proxy', async (c) => {
@@ -68,6 +148,28 @@ app.post('/proxy', async (c) => {
     const request: DecryptedRequest = JSON.parse(decryptedJson);
 
     console.log(`[Proxy] ${request.method} ${request.endpoint}`);
+
+    // Process files if present
+    const files = request.files || [];
+    const imagePaths: string[] = [];
+    let fileContext = '';
+
+    if (files.length > 0) {
+      console.log(`[Proxy] Processing ${files.length} files...`);
+
+      for (const file of files) {
+        if (file.type.startsWith('image/')) {
+          // Save images to temp files for Claude CLI
+          const imgPath = saveImageToTemp(file);
+          imagePaths.push(imgPath);
+          console.log(`[Proxy] Saved image: ${file.name} -> ${imgPath}`);
+        } else {
+          // Extract text from documents
+          const content = await extractFileContent(file);
+          fileContext += content;
+        }
+      }
+    }
 
     // Build the prompt from messages
     const messages = request.body?.messages || [];
@@ -97,13 +199,18 @@ app.post('/proxy', async (c) => {
       }
     }
 
+    // Add file context if any
+    if (fileContext) {
+      fullPrompt += `Attached documents:\n${fileContext}\n\n`;
+    }
+
     // Add conversation history
     fullPrompt += messages.map(m => `${m.role}: ${m.content}`).join('\n\n');
 
-    console.log(`[Proxy] Calling Claude CLI...`);
+    console.log(`[Proxy] Calling Claude CLI with ${imagePaths.length} images...`);
 
-    // Call Claude using CLI with OAuth token
-    const assistantResponse = await callClaudeCLI(fullPrompt);
+    // Call Claude using CLI with OAuth token and images
+    const assistantResponse = await callClaudeCLI(fullPrompt, imagePaths);
 
     // Store assistant response in memory
     await memory.store(sessionId, 'assistant', assistantResponse);
