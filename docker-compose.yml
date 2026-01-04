@@ -12,7 +12,7 @@ services:
       - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN}
       - QDRANT_URL=http://qdrant:6333
     volumes:
-      - ~/.claude:/root/.claude:ro
+      - /root/.claude:/root/.claude
     depends_on:
       - qdrant
     networks:
