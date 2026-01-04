@@ -406,7 +406,7 @@ export function Chat() {
       </motion.header>
 
       {/* Messages */}
-      <ScrollArea className="flex-1 p-4" ref={scrollRef}>
+      <ScrollArea className="flex-1 p-4 bg-black" ref={scrollRef}>
         <div className="max-w-4xl mx-auto space-y-4">
           <AnimatePresence mode="popLayout">
             {messages.length === 0 && (
