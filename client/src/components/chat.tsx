@@ -66,17 +66,17 @@ function CodeBlock({ language, children }: { language: string; children: string 
   };
 
   return (
-    <div className="relative group my-3">
+    <div className="relative group my-3 -mx-4">
       <div className="absolute right-2 top-2 z-10">
         <button
           onClick={handleCopy}
-          className="p-1.5 rounded bg-zinc-700 hover:bg-zinc-600 text-zinc-300 opacity-0 group-hover:opacity-100 transition-opacity"
+          className="p-1.5 rounded bg-zinc-600 hover:bg-zinc-500 text-zinc-300 opacity-0 group-hover:opacity-100 transition-opacity"
         >
           {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
         </button>
       </div>
       {language && (
-        <div className="absolute left-3 top-2 text-xs text-zinc-500 font-mono">
+        <div className="absolute left-3 top-2 text-xs text-zinc-400 font-mono">
           {language}
         </div>
       )}
@@ -86,8 +86,11 @@ function CodeBlock({ language, children }: { language: string; children: string 
         PreTag="div"
         customStyle={{
           margin: 0,
-          borderRadius: '0.5rem',
+          borderRadius: 0,
           paddingTop: language ? '2rem' : '1rem',
+          paddingLeft: '1rem',
+          paddingRight: '1rem',
+          background: '#1e1e1e',
         }}
       >
         {children}
@@ -363,10 +366,10 @@ export function Chat() {
                     </AvatarFallback>
                   </Avatar>
                 )}
-                <Card className={`max-w-[80%] p-4 ${
+                <Card className={`max-w-[80%] p-4 overflow-hidden ${
                   message.role === 'user'
                     ? 'bg-violet-600 text-white border-violet-500'
-                    : 'bg-zinc-800/50 border-zinc-700 text-zinc-100'
+                    : 'bg-zinc-800 border-zinc-700 text-zinc-100'
                 }`}>
                   {message.role === 'assistant' ? (
                     <div className="text-sm leading-relaxed prose prose-invert prose-sm max-w-none">
