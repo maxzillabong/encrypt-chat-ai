@@ -573,7 +573,7 @@ app.post('/api/v1/analytics/query', async (c) => {
       }
       fullPrompt += messages.map(m => `${m.role}: ${m.content}`).join('\n\n');
 
-      const assistantResponse = await callClaudeCLI(fullPrompt, []);
+      const assistantResponse = await callClaudeCLI(fullPrompt);
       await memory.store(body.sessionId, 'assistant', assistantResponse);
 
       const responseData = JSON.stringify({
