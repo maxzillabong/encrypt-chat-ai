@@ -829,12 +829,12 @@ export function Chat() {
       </AnimatePresence>
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Header */}
         <motion.header
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-xl"
+          className="flex-shrink-0 border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-xl"
         >
           <div className="px-4 py-4 flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -871,7 +871,7 @@ export function Chat() {
         </motion.header>
 
         {/* Messages */}
-        <ScrollArea className="flex-1 p-4 bg-black" ref={scrollRef}>
+        <ScrollArea className="flex-1 min-h-0 p-4 bg-black" ref={scrollRef}>
           <div className="max-w-4xl mx-auto space-y-4">
             {/* Web search indicator */}
             <AnimatePresence>
@@ -990,7 +990,7 @@ export function Chat() {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="border-t border-zinc-800 bg-zinc-950/80 backdrop-blur-xl p-4"
+          className="flex-shrink-0 border-t border-zinc-800 bg-zinc-950/80 backdrop-blur-xl p-4"
         >
           <div className="max-w-4xl mx-auto">
             {attachedFiles.length > 0 && (
