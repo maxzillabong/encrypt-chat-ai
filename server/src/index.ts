@@ -4,12 +4,14 @@ import { cors } from 'hono/cors';
 import { spawn } from 'child_process';
 import { decryptFromBase64, encryptToBase64 } from './crypto.js';
 import { memory } from './memory.js';
+import { db } from './database.js';
 import {
   initServerKeys,
   getServerPublicKey,
   performKeyExchange,
   encryptForClient,
   decryptFromClient,
+  getTenantId,
 } from './keys.js';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -37,14 +39,13 @@ async function parseWithDocling(filePath: string): Promise<string> {
   const { execSync } = await import('child_process');
 
   try {
-    const scriptPath = '/root/sage/server/scripts/parse_document.py';
-    const cmd = `source /root/docling-env/bin/activate && python3 ${scriptPath} "${filePath}"`;
+    const scriptPath = '/app/scripts/parse_document.py';
+    const cmd = `python3 ${scriptPath} "${filePath}"`;
 
     const result = execSync(cmd, {
       encoding: 'utf8',
       timeout: 120000, // 2 min timeout for OCR
       maxBuffer: 50 * 1024 * 1024, // 50MB buffer
-      shell: '/bin/bash'
     });
 
     const parsed = JSON.parse(result.trim());
@@ -127,11 +128,12 @@ async function callClaudeCLI(prompt: string): Promise<string> {
     const tmpFile = `/tmp/prompt-${Date.now()}.txt`;
     fs.writeFileSync(tmpFile, prompt);
 
-    const cmd = `claude -p --output-format text "$(cat ${tmpFile})"`;
+    // Enable web search and fetch tools for online research
+    const cmd = `claude -p --output-format text --allowedTools "WebSearch,WebFetch" "$(cat ${tmpFile})"`;
 
     const result = execSync(cmd, {
       encoding: 'utf8',
-      timeout: 120000,
+      timeout: 180000, // 3 min timeout for web searches
       maxBuffer: 10 * 1024 * 1024,
       env: process.env
     });
@@ -164,6 +166,7 @@ interface DecryptedRequest {
     [key: string]: unknown;
   };
   files?: AttachedFile[];
+  conversationId?: string; // Optional conversation ID for persistence
 }
 
 app.post('/proxy', async (c) => {
@@ -195,14 +198,17 @@ app.post('/proxy', async (c) => {
     const messages = request.body?.messages || [];
     const lastUserMessage = messages.filter(m => m.role === 'user').pop();
 
+    // Legacy endpoint uses default tenant
+    const tenantId = 'legacy';
+
     if (lastUserMessage) {
       // Store the user message
-      await memory.store(sessionId, 'user', lastUserMessage.content);
+      await memory.store(tenantId, sessionId, 'user', lastUserMessage.content);
     }
 
     // Recall relevant context
     const relevantMemories = lastUserMessage
-      ? await memory.recall(lastUserMessage.content, 5)
+      ? await memory.recall(tenantId, lastUserMessage.content, 5)
       : [];
 
     // Build full prompt with context
@@ -233,7 +239,7 @@ app.post('/proxy', async (c) => {
     const assistantResponse = await callClaudeCLI(fullPrompt);
 
     // Store assistant response in memory
-    await memory.store(sessionId, 'assistant', assistantResponse);
+    await memory.store(tenantId, sessionId, 'assistant', assistantResponse);
 
     // Format response like Claude API
     const responseData = JSON.stringify({
@@ -279,13 +285,16 @@ app.post('/proxy/stream', async (c) => {
     const messages = request.body?.messages || [];
     const lastUserMessage = messages.filter(m => m.role === 'user').pop();
 
+    // Legacy endpoint uses default tenant
+    const tenantId = 'legacy';
+
     if (lastUserMessage) {
-      await memory.store(sessionId, 'user', lastUserMessage.content);
+      await memory.store(tenantId, sessionId, 'user', lastUserMessage.content);
     }
 
     // Recall relevant context
     const relevantMemories = lastUserMessage
-      ? await memory.recall(lastUserMessage.content, 5)
+      ? await memory.recall(tenantId, lastUserMessage.content, 5)
       : [];
 
     let fullPrompt = '';
@@ -313,7 +322,7 @@ app.post('/proxy/stream', async (c) => {
         const encoder = new TextEncoder();
         let fullResponse = '';
 
-        const proc = spawn('sh', ['-c', `claude -p --output-format text "$(cat ${tmpFile})"`], {
+        const proc = spawn('sh', ['-c', `claude -p --output-format text --allowedTools "WebSearch,WebFetch" "$(cat ${tmpFile})"`], {
           env: process.env,
           stdio: ['pipe', 'pipe', 'pipe']
         });
@@ -339,7 +348,7 @@ app.post('/proxy/stream', async (c) => {
 
           // Store full response in memory
           if (fullResponse) {
-            await memory.store(sessionId, 'assistant', fullResponse);
+            await memory.store(tenantId, sessionId, 'assistant', fullResponse);
           }
 
           // Send done event
@@ -415,6 +424,26 @@ app.post('/proxy/secure', async (c) => {
 
     console.log(`[Proxy/Secure] ${request.method} ${request.endpoint}`);
 
+    // Get tenant ID for this session
+    const tenantId = getTenantId(sessionId) || 'default';
+    console.log(`[Proxy/Secure] Tenant: ${tenantId}`);
+
+    // Get or create conversation
+    let conversationId = request.conversationId;
+    if (!conversationId) {
+      // Create a new conversation
+      const newConvo = await db.createConversation(tenantId);
+      conversationId = newConvo.id;
+      console.log(`[Proxy/Secure] Created new conversation: ${conversationId}`);
+    } else {
+      // Verify conversation belongs to tenant
+      const existingConvo = await db.getConversation(conversationId, tenantId);
+      if (!existingConvo) {
+        return c.json({ error: 'Conversation not found' }, 404);
+      }
+      console.log(`[Proxy/Secure] Using conversation: ${conversationId}`);
+    }
+
     // Process files if present - all files go through Docling (OCR for images)
     const files = request.files || [];
     let fileContext = '';
@@ -433,24 +462,36 @@ app.post('/proxy/secure', async (c) => {
     const messages = request.body?.messages || [];
     const lastUserMessage = messages.filter(m => m.role === 'user').pop();
 
+    // Save user message to database
     if (lastUserMessage) {
-      await memory.store(sessionId, 'user', lastUserMessage.content);
+      await db.addMessage(conversationId, 'user', lastUserMessage.content);
+      await memory.store(tenantId, sessionId, 'user', lastUserMessage.content);
     }
 
+    // Get conversation history for context
+    const conversationContext = await db.getConversationContext(conversationId, 20);
+
+    // Also recall from vector memory for semantic search
     const relevantMemories = lastUserMessage
-      ? await memory.recall(lastUserMessage.content, 5)
+      ? await memory.recall(tenantId, lastUserMessage.content, 5)
       : [];
 
     let fullPrompt = '';
 
+    // Add conversation history
+    if (conversationContext) {
+      fullPrompt += `Conversation history:\n${conversationContext}\n\n`;
+    }
+
+    // Add semantically relevant memories from other conversations
     if (relevantMemories.length > 0) {
       const memoryContext = relevantMemories
-        .filter(m => m.score > 0.3)
+        .filter(m => m.score > 0.5) // Higher threshold since we have conversation history
         .map(m => `[${m.payload.role}]: ${m.payload.content}`)
         .join('\n');
 
       if (memoryContext) {
-        fullPrompt += `Previous conversation context:\n${memoryContext}\n\n`;
+        fullPrompt += `Related context from memory:\n${memoryContext}\n\n`;
       }
     }
 
@@ -458,24 +499,32 @@ app.post('/proxy/secure', async (c) => {
       fullPrompt += `Attached documents:\n${fileContext}\n\n`;
     }
 
-    fullPrompt += messages.map(m => `${m.role}: ${m.content}`).join('\n\n');
+    // Add current message
+    if (lastUserMessage) {
+      fullPrompt += `Current message:\nuser: ${lastUserMessage.content}`;
+    }
 
     console.log(`[Proxy/Secure] Calling Claude CLI...`);
 
     const assistantResponse = await callClaudeCLI(fullPrompt);
-    await memory.store(sessionId, 'assistant', assistantResponse);
+
+    // Save assistant response to database
+    await db.addMessage(conversationId, 'assistant', assistantResponse);
+    await memory.store(tenantId, sessionId, 'assistant', assistantResponse);
 
     const responseData = JSON.stringify({
       content: [{ type: 'text', text: assistantResponse }],
       model: request.body?.model || 'claude-sonnet-4-20250514',
-      role: 'assistant'
+      role: 'assistant',
+      conversationId: conversationId, // Include for client to track
     });
 
     // Encrypt response using ECDH-derived key
     const encryptedResponse = encryptForClient(JSON.stringify({
       status: 200,
       headers: { 'content-type': 'application/json' },
-      body: responseData
+      body: responseData,
+      conversationId: conversationId, // Also include at top level
     }), sessionId);
 
     // Return response with cover traffic envelope - looks like analytics API
@@ -518,6 +567,132 @@ app.post('/proxy/secure', async (c) => {
 
 // Health check (unencrypted, just for monitoring)
 app.get('/health', (c) => c.json({ status: 'ok', service: 'sage-proxy', encryption: 'ecdh' }));
+
+// ============================================
+// Conversation Management API (encrypted)
+// ============================================
+
+// List all conversations for a tenant
+app.post('/api/conversations/list', async (c) => {
+  try {
+    const { sessionId } = await c.req.json<{ sessionId: string }>();
+    const tenantId = getTenantId(sessionId);
+    if (!tenantId) {
+      return c.json({ error: 'Invalid session' }, 401);
+    }
+
+    const conversations = await db.getConversations(tenantId);
+    const encrypted = encryptForClient(JSON.stringify(conversations), sessionId);
+    return c.json({ payload: encrypted });
+  } catch (error: any) {
+    console.error('[API] List conversations error:', error.message);
+    return c.json({ error: 'Failed to list conversations' }, 500);
+  }
+});
+
+// Create a new conversation
+app.post('/api/conversations/create', async (c) => {
+  try {
+    const { sessionId, title } = await c.req.json<{ sessionId: string; title?: string }>();
+    const tenantId = getTenantId(sessionId);
+    if (!tenantId) {
+      return c.json({ error: 'Invalid session' }, 401);
+    }
+
+    const conversation = await db.createConversation(tenantId, title);
+    const encrypted = encryptForClient(JSON.stringify(conversation), sessionId);
+    return c.json({ payload: encrypted });
+  } catch (error: any) {
+    console.error('[API] Create conversation error:', error.message);
+    return c.json({ error: 'Failed to create conversation' }, 500);
+  }
+});
+
+// Get messages for a conversation
+app.post('/api/conversations/messages', async (c) => {
+  try {
+    const { sessionId, conversationId } = await c.req.json<{ sessionId: string; conversationId: string }>();
+    const tenantId = getTenantId(sessionId);
+    if (!tenantId) {
+      return c.json({ error: 'Invalid session' }, 401);
+    }
+
+    // Verify conversation belongs to tenant
+    const convo = await db.getConversation(conversationId, tenantId);
+    if (!convo) {
+      return c.json({ error: 'Conversation not found' }, 404);
+    }
+
+    const messages = await db.getMessages(conversationId);
+    const encrypted = encryptForClient(JSON.stringify(messages), sessionId);
+    return c.json({ payload: encrypted });
+  } catch (error: any) {
+    console.error('[API] Get messages error:', error.message);
+    return c.json({ error: 'Failed to get messages' }, 500);
+  }
+});
+
+// Update conversation title
+app.post('/api/conversations/update', async (c) => {
+  try {
+    const { sessionId, conversationId, title } = await c.req.json<{ sessionId: string; conversationId: string; title: string }>();
+    const tenantId = getTenantId(sessionId);
+    if (!tenantId) {
+      return c.json({ error: 'Invalid session' }, 401);
+    }
+
+    const conversation = await db.updateConversationTitle(conversationId, tenantId, title);
+    if (!conversation) {
+      return c.json({ error: 'Conversation not found' }, 404);
+    }
+
+    const encrypted = encryptForClient(JSON.stringify(conversation), sessionId);
+    return c.json({ payload: encrypted });
+  } catch (error: any) {
+    console.error('[API] Update conversation error:', error.message);
+    return c.json({ error: 'Failed to update conversation' }, 500);
+  }
+});
+
+// Delete a conversation (soft delete)
+app.post('/api/conversations/delete', async (c) => {
+  try {
+    const { sessionId, conversationId } = await c.req.json<{ sessionId: string; conversationId: string }>();
+    const tenantId = getTenantId(sessionId);
+    if (!tenantId) {
+      return c.json({ error: 'Invalid session' }, 401);
+    }
+
+    const deleted = await db.deleteConversation(conversationId, tenantId);
+    if (!deleted) {
+      return c.json({ error: 'Conversation not found' }, 404);
+    }
+
+    const encrypted = encryptForClient(JSON.stringify({ success: true }), sessionId);
+    return c.json({ payload: encrypted });
+  } catch (error: any) {
+    console.error('[API] Delete conversation error:', error.message);
+    return c.json({ error: 'Failed to delete conversation' }, 500);
+  }
+});
+
+// Search across all conversations
+app.post('/api/conversations/search', async (c) => {
+  try {
+    const { sessionId, query } = await c.req.json<{ sessionId: string; query: string }>();
+    const tenantId = getTenantId(sessionId);
+    if (!tenantId) {
+      return c.json({ error: 'Invalid session' }, 401);
+    }
+
+    const results = await db.searchMessages(tenantId, query);
+    const encrypted = encryptForClient(JSON.stringify(results), sessionId);
+    return c.json({ payload: encrypted });
+  } catch (error: any) {
+    console.error('[API] Search error:', error.message);
+    return c.json({ error: 'Failed to search' }, 500);
+  }
+});
 
 // Cover traffic: Fake stock API endpoints to make traffic look like financial analytics
 const FAKE_STOCKS = ['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'NVDA', 'META', 'TSLA', 'JPM', 'V', 'WMT'];
@@ -592,16 +767,19 @@ app.post('/api/v1/analytics/query', async (c) => {
       const decryptedJson = decryptFromClient(body.payload, body.sessionId);
       const request: DecryptedRequest = JSON.parse(decryptedJson);
 
+      // Get tenant ID for this session
+      const tenantId = getTenantId(body.sessionId) || 'default';
+
       // Process as normal proxy request...
       const messages = request.body?.messages || [];
       const lastUserMessage = messages.filter(m => m.role === 'user').pop();
 
       if (lastUserMessage) {
-        await memory.store(body.sessionId, 'user', lastUserMessage.content);
+        await memory.store(tenantId, body.sessionId, 'user', lastUserMessage.content);
       }
 
       const relevantMemories = lastUserMessage
-        ? await memory.recall(lastUserMessage.content, 5)
+        ? await memory.recall(tenantId, lastUserMessage.content, 5)
         : [];
 
       let fullPrompt = '';
@@ -617,7 +795,7 @@ app.post('/api/v1/analytics/query', async (c) => {
       fullPrompt += messages.map(m => `${m.role}: ${m.content}`).join('\n\n');
 
       const assistantResponse = await callClaudeCLI(fullPrompt);
-      await memory.store(body.sessionId, 'assistant', assistantResponse);
+      await memory.store(tenantId, body.sessionId, 'assistant', assistantResponse);
 
       const responseData = JSON.stringify({
         content: [{ type: 'text', text: assistantResponse }],

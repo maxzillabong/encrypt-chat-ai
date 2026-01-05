@@ -16,7 +16,11 @@ import {
   encryptWithKey,
   decryptWithKey,
 } from '@/lib/keys';
-import { Send, Lock, Loader2, Sparkles, Copy, Check, Paperclip, X, FileText, Image as ImageIcon, FileSpreadsheet } from 'lucide-react';
+import {
+  Send, Lock, Loader2, Sparkles, Copy, Check, Paperclip, X, FileText,
+  Image as ImageIcon, FileSpreadsheet, Plus, Search, Trash2, MessageSquare,
+  ChevronLeft, ChevronRight, Globe, ExternalLink
+} from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -27,8 +31,8 @@ interface AttachedFile {
   name: string;
   type: string;
   size: number;
-  data: string; // base64
-  preview?: string; // for images
+  data: string;
+  preview?: string;
 }
 
 interface Message {
@@ -38,9 +42,32 @@ interface Message {
   timestamp: Date;
   isTyping?: boolean;
   files?: AttachedFile[];
+  sources?: WebSource[];
 }
 
-// Typewriter effect for simulated streaming
+interface Conversation {
+  id: string;
+  tenant_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface WebSource {
+  url: string;
+  title: string;
+  query?: string;
+}
+
+interface SearchResult {
+  id: string;
+  content: string;
+  conversation_id: string;
+  conversation_title: string;
+  created_at: string;
+}
+
+// Typewriter effect
 function TypewriterText({ content, onComplete }: { content: string; onComplete: () => void }) {
   const [displayedContent, setDisplayedContent] = useState('');
   const [isComplete, setIsComplete] = useState(false);
@@ -49,7 +76,7 @@ function TypewriterText({ content, onComplete }: { content: string; onComplete: 
     if (isComplete) return;
 
     let currentIndex = 0;
-    const words = content.split(/(\s+)/); // Split by whitespace, keeping separators
+    const words = content.split(/(\s+)/);
     let currentText = '';
 
     const interval = setInterval(() => {
@@ -62,7 +89,7 @@ function TypewriterText({ content, onComplete }: { content: string; onComplete: 
         setIsComplete(true);
         onComplete();
       }
-    }, 15 + Math.random() * 25); // Random delay between 15-40ms per word for natural feel
+    }, 15 + Math.random() * 25);
 
     return () => clearInterval(interval);
   }, [content, isComplete, onComplete]);
@@ -73,7 +100,7 @@ function TypewriterText({ content, onComplete }: { content: string; onComplete: 
 const PROXY_URL = process.env.NEXT_PUBLIC_PROXY_URL || 'http://localhost:3100';
 const SHARED_SECRET = process.env.NEXT_PUBLIC_ENCRYPT_SECRET || 'dev-secret';
 
-// Generate cover traffic to make requests look like normal business API calls
+// Cover traffic generator
 function generateCoverTraffic() {
   const requestId = crypto.randomUUID();
   const timestamp = new Date().toISOString();
@@ -103,7 +130,7 @@ function generateCoverTraffic() {
   };
 }
 
-// Code block component with copy button
+// Code block with copy
 function CodeBlock({ language, children }: { language: string; children: string }) {
   const [copied, setCopied] = useState(false);
 
@@ -149,7 +176,7 @@ function CodeBlock({ language, children }: { language: string; children: string 
   );
 }
 
-// Markdown renderer component
+// Markdown renderer
 function MarkdownContent({ content }: { content: string }) {
   return (
     <ReactMarkdown
@@ -231,11 +258,66 @@ function MarkdownContent({ content }: { content: string }) {
   );
 }
 
-// Debug logging
-console.log('[Sage] Proxy URL:', PROXY_URL);
-console.log('[Sage] Secret configured:', !!process.env.NEXT_PUBLIC_ENCRYPT_SECRET);
+// Web search indicator component
+function WebSearchIndicator({ query, isSearching }: { query: string; isSearching: boolean }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: 'auto' }}
+      exit={{ opacity: 0, height: 0 }}
+      className="flex items-center gap-2 px-3 py-2 bg-blue-500/10 border border-blue-500/30 rounded-lg mb-2"
+    >
+      <motion.div
+        animate={isSearching ? { rotate: 360 } : {}}
+        transition={{ duration: 1, repeat: isSearching ? Infinity : 0, ease: 'linear' }}
+      >
+        <Globe className="w-4 h-4 text-blue-400" />
+      </motion.div>
+      <span className="text-sm text-blue-300">
+        {isSearching ? 'Searching: ' : 'Searched: '}
+        <span className="font-medium">{query}</span>
+      </span>
+    </motion.div>
+  );
+}
+
+// Sources panel
+function SourcesPanel({ sources }: { sources: WebSource[] }) {
+  if (!sources || sources.length === 0) return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="mt-3 pt-3 border-t border-zinc-700"
+    >
+      <div className="flex items-center gap-2 mb-2">
+        <Globe className="w-3 h-3 text-zinc-400" />
+        <span className="text-xs font-medium text-zinc-400">Sources</span>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {sources.map((source, idx) => (
+          <motion.a
+            key={idx}
+            href={source.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ delay: idx * 0.05 }}
+            className="flex items-center gap-1.5 px-2 py-1 bg-zinc-700/50 hover:bg-zinc-700 rounded text-xs text-zinc-300 hover:text-white transition-colors"
+          >
+            <ExternalLink className="w-3 h-3" />
+            <span className="truncate max-w-[150px]">{source.title || new URL(source.url).hostname}</span>
+          </motion.a>
+        ))}
+      </div>
+    </motion.div>
+  );
+}
 
 export function Chat() {
+  // State
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -244,6 +326,20 @@ export function Chat() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sharedKey, setSharedKey] = useState<CryptoKey | null>(null);
   const [useECDH, setUseECDH] = useState(false);
+
+  // Conversation state
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // Web search state
+  const [webSearchQuery, setWebSearchQuery] = useState<string | null>(null);
+  const [isWebSearching, setIsWebSearching] = useState(false);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -261,27 +357,116 @@ export function Chat() {
     'text/csv': 'text',
   } as const;
 
-  // Initialize ECDH key exchange
+  // API helper
+  const callAPI = useCallback(async (endpoint: string, data: object) => {
+    if (!sessionId || !sharedKey) throw new Error('Not connected');
+
+    const cover = generateCoverTraffic();
+    const encryptedData = await encryptWithKey(JSON.stringify(data), sharedKey);
+
+    const response = await fetch(`${PROXY_URL}${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cover.headers },
+      body: JSON.stringify({ ...cover.envelope, sessionId, payload: encryptedData })
+    });
+
+    const json = await response.json();
+    if (json.error) throw new Error(json.error);
+
+    const decrypted = await decryptWithKey(json.payload, sharedKey);
+    return JSON.parse(decrypted);
+  }, [sessionId, sharedKey]);
+
+  // Load conversations
+  const loadConversations = useCallback(async () => {
+    if (!sessionId || !sharedKey) return;
+    try {
+      const convos = await callAPI('/api/conversations/list', { sessionId });
+      setConversations(convos);
+    } catch (error) {
+      console.error('[Sage] Failed to load conversations:', error);
+    }
+  }, [sessionId, sharedKey, callAPI]);
+
+  // Load messages for a conversation
+  const loadMessages = useCallback(async (conversationId: string) => {
+    if (!sessionId || !sharedKey) return;
+    try {
+      const msgs = await callAPI('/api/conversations/messages', { sessionId, conversationId });
+      setMessages(msgs.map((m: any) => ({
+        id: m.id,
+        role: m.role,
+        content: m.content,
+        timestamp: new Date(m.created_at),
+      })));
+      setCurrentConversationId(conversationId);
+    } catch (error) {
+      console.error('[Sage] Failed to load messages:', error);
+    }
+  }, [sessionId, sharedKey, callAPI]);
+
+  // Create new conversation
+  const createNewConversation = useCallback(async () => {
+    setMessages([]);
+    setCurrentConversationId(null);
+  }, []);
+
+  // Delete conversation
+  const deleteConversation = useCallback(async (conversationId: string) => {
+    if (!sessionId || !sharedKey) return;
+    setDeletingId(conversationId);
+    try {
+      await callAPI('/api/conversations/delete', { sessionId, conversationId });
+      setConversations(prev => prev.filter(c => c.id !== conversationId));
+      if (currentConversationId === conversationId) {
+        setMessages([]);
+        setCurrentConversationId(null);
+      }
+    } catch (error) {
+      console.error('[Sage] Failed to delete conversation:', error);
+    } finally {
+      setDeletingId(null);
+    }
+  }, [sessionId, sharedKey, callAPI, currentConversationId]);
+
+  // Search conversations
+  const searchConversations = useCallback(async (query: string) => {
+    if (!query.trim() || !sessionId || !sharedKey) {
+      setSearchResults([]);
+      return;
+    }
+    setIsSearching(true);
+    try {
+      const results = await callAPI('/api/conversations/search', { sessionId, query });
+      setSearchResults(results);
+    } catch (error) {
+      console.error('[Sage] Search failed:', error);
+    } finally {
+      setIsSearching(false);
+    }
+  }, [sessionId, sharedKey, callAPI]);
+
+  // Debounced search
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      searchConversations(searchQuery);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery, searchConversations]);
+
+  // Initialize ECDH
   useEffect(() => {
     async function initKeyExchange() {
       try {
-        // First check if server is healthy
         const healthRes = await fetch(`${PROXY_URL}/health`);
         if (!healthRes.ok) {
-          console.log('[Sage] Server not available');
           setIsConnected(false);
           return;
         }
 
-        const health = await healthRes.json();
-        console.log('[Sage] Server health:', health);
-
-        // Generate or load client key pair
-        console.log('[Sage] Initializing ECDH key exchange...');
         const keyPair = await getOrCreateKeyPair();
         const clientPublicKey = await getPublicKeyBase64(keyPair);
 
-        // Exchange keys with server
         const exchangeRes = await fetch(`${PROXY_URL}/key-exchange`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -289,15 +474,12 @@ export function Chat() {
         });
 
         if (!exchangeRes.ok) {
-          console.log('[Sage] Key exchange failed, falling back to shared secret');
           setIsConnected(true);
           setUseECDH(false);
           return;
         }
 
         const { serverPublicKey, sessionId: sid } = await exchangeRes.json();
-
-        // Derive shared secret
         const serverKey = await importServerPublicKey(serverPublicKey);
         const derivedKey = await deriveSharedSecret(keyPair.privateKey, serverKey);
 
@@ -305,11 +487,8 @@ export function Chat() {
         setSharedKey(derivedKey);
         setUseECDH(true);
         setIsConnected(true);
-
-        console.log('[Sage] ECDH key exchange complete, session:', sid.slice(0, 8) + '...');
       } catch (error) {
         console.error('[Sage] Key exchange error:', error);
-        // Fall back to legacy shared secret
         setIsConnected(true);
         setUseECDH(false);
       }
@@ -318,6 +497,13 @@ export function Chat() {
     initKeyExchange();
   }, []);
 
+  // Load conversations after connection
+  useEffect(() => {
+    if (isConnected && useECDH && sessionId && sharedKey) {
+      loadConversations();
+    }
+  }, [isConnected, useECDH, sessionId, sharedKey, loadConversations]);
+
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -325,11 +511,7 @@ export function Chat() {
   }, [messages]);
 
   const markTypingComplete = useCallback((messageId: string) => {
-    setMessages(prev =>
-      prev.map(m =>
-        m.id === messageId ? { ...m, isTyping: false } : m
-      )
-    );
+    setMessages(prev => prev.map(m => m.id === messageId ? { ...m, isTyping: false } : m));
   }, []);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -342,7 +524,7 @@ export function Chat() {
         continue;
       }
 
-      if (file.size > 20 * 1024 * 1024) { // 20MB limit
+      if (file.size > 20 * 1024 * 1024) {
         alert(`File too large: ${file.name} (max 20MB)`);
         continue;
       }
@@ -363,10 +545,7 @@ export function Chat() {
       reader.readAsDataURL(file);
     }
 
-    // Reset input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const removeFile = (id: string) => {
@@ -387,6 +566,24 @@ export function Chat() {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
+  // Parse web sources from response
+  const parseWebSources = (content: string): WebSource[] => {
+    const sources: WebSource[] = [];
+    const urlRegex = /https?:\/\/[^\s\)]+/g;
+    const matches = content.match(urlRegex) || [];
+
+    matches.forEach(url => {
+      try {
+        const parsed = new URL(url);
+        if (!sources.find(s => s.url === url)) {
+          sources.push({ url, title: parsed.hostname });
+        }
+      } catch {}
+    });
+
+    return sources.slice(0, 5); // Max 5 sources
+  };
+
   const sendMessage = async () => {
     if ((!input.trim() && attachedFiles.length === 0) || isLoading) return;
 
@@ -403,84 +600,73 @@ export function Chat() {
     setAttachedFiles([]);
     setIsLoading(true);
 
+    // Check if this might trigger a web search
+    const searchKeywords = ['search', 'find', 'look up', 'what is', 'who is', 'latest', 'current', 'news', 'today'];
+    const mightSearch = searchKeywords.some(kw => input.toLowerCase().includes(kw));
+    if (mightSearch) {
+      setWebSearchQuery(input.slice(0, 50));
+      setIsWebSearching(true);
+    }
+
     try {
-      // Build the request for Claude API
       const apiRequest = {
         endpoint: '/v1/messages',
         method: 'POST',
         body: {
           model: 'claude-sonnet-4-20250514',
           max_tokens: 4096,
-          messages: [...messages, userMessage].map(m => ({
-            role: m.role,
-            content: m.content
-          }))
+          messages: [...messages, userMessage].map(m => ({ role: m.role, content: m.content }))
         },
-        // Include files separately for the proxy to handle
-        files: userMessage.files?.map(f => ({
-          name: f.name,
-          type: f.type,
-          data: f.data,
-        })),
+        files: userMessage.files?.map(f => ({ name: f.name, type: f.type, data: f.data })),
+        conversationId: currentConversationId,
       };
 
-      let response;
       let decryptedResponse;
-
-      // Generate cover traffic for obfuscation
       const cover = generateCoverTraffic();
 
       if (useECDH && sharedKey && sessionId) {
-        // Use ECDH-derived key encryption
-        console.log('[Sage] Using ECDH encryption');
         const encryptedData = await encryptWithKey(JSON.stringify(apiRequest), sharedKey);
 
-        response = await fetch(`${PROXY_URL}/proxy/secure`, {
+        const response = await fetch(`${PROXY_URL}/proxy/secure`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...cover.headers,
-          },
-          body: JSON.stringify({
-            ...cover.envelope,
-            payload: encryptedData,
-            sessionId
-          })
+          headers: { 'Content-Type': 'application/json', ...cover.headers },
+          body: JSON.stringify({ ...cover.envelope, payload: encryptedData, sessionId })
         });
 
         const responseJson = await response.json();
-        // Extract encrypted payload from signature (primary) or payload/data (fallback)
         const encryptedPayload = responseJson.signature || responseJson.payload || responseJson.data;
         decryptedResponse = JSON.parse(await decryptWithKey(encryptedPayload, sharedKey));
+
+        // Update conversation ID if new
+        if (decryptedResponse.conversationId && !currentConversationId) {
+          setCurrentConversationId(decryptedResponse.conversationId);
+          loadConversations(); // Refresh list
+        }
       } else {
-        // Fall back to legacy shared secret
-        console.log('[Sage] Using legacy shared secret encryption');
         const encryptedData = await encrypt(JSON.stringify(apiRequest), SHARED_SECRET);
 
-        response = await fetch(`${PROXY_URL}/proxy`, {
+        const response = await fetch(`${PROXY_URL}/proxy`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...cover.headers,
-          },
-          body: JSON.stringify({
-            ...cover.envelope,
-            payload: encryptedData
-          })
+          headers: { 'Content-Type': 'application/json', ...cover.headers },
+          body: JSON.stringify({ ...cover.envelope, payload: encryptedData })
         });
 
         const responseJson = await response.json();
         decryptedResponse = JSON.parse(await decrypt(responseJson.payload || responseJson.data, SHARED_SECRET));
       }
 
+      setIsWebSearching(false);
       const body = JSON.parse(decryptedResponse.body);
+      const content = body.content?.[0]?.text || body.error?.message || 'No response';
+      const sources = parseWebSources(content);
 
       const assistantMessage: Message = {
         id: crypto.randomUUID(),
         role: 'assistant',
-        content: body.content?.[0]?.text || body.error?.message || 'No response',
+        content,
         timestamp: new Date(),
-        isTyping: true
+        isTyping: true,
+        sources: sources.length > 0 ? sources : undefined,
       };
 
       setMessages(prev => [...prev, assistantMessage]);
@@ -494,268 +680,386 @@ export function Chat() {
       }]);
     } finally {
       setIsLoading(false);
+      setWebSearchQuery(null);
+      setIsWebSearching(false);
     }
   };
 
+  const formatDate = (date: string) => {
+    const d = new Date(date);
+    const now = new Date();
+    const diff = now.getTime() - d.getTime();
+
+    if (diff < 60000) return 'Just now';
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+    if (diff < 604800000) return `${Math.floor(diff / 86400000)}d ago`;
+    return d.toLocaleDateString();
+  };
+
   return (
-    <div className="flex flex-col h-screen bg-black">
-      {/* Header */}
-      <motion.header
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-xl"
-      >
-        <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <motion.div
-              animate={{ rotate: [0, 10, -10, 0] }}
-              transition={{ duration: 2, repeat: Infinity, repeatDelay: 3 }}
-            >
-              <Sparkles className="w-6 h-6 text-violet-400" />
-            </motion.div>
-            <h1 className="text-xl font-semibold bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent">
-              Sage
-            </h1>
-          </div>
-          <div className="flex items-center gap-2">
-            <motion.div
-              animate={{ scale: isConnected ? [1, 1.2, 1] : 1 }}
-              transition={{ duration: 1, repeat: isConnected ? Infinity : 0, repeatDelay: 2 }}
-            >
-              <Lock className={`w-4 h-4 ${isConnected ? 'text-emerald-400' : 'text-zinc-600'}`} />
-            </motion.div>
-            <span className="text-xs text-zinc-500">
-              {isConnected ? (useECDH ? 'ECDH Encrypted' : 'AES Encrypted') : 'Disconnected'}
-            </span>
-          </div>
-        </div>
-      </motion.header>
-
-      {/* Messages */}
-      <ScrollArea className="flex-1 p-4 bg-black" ref={scrollRef}>
-        <div className="max-w-4xl mx-auto space-y-4">
-          <AnimatePresence mode="popLayout">
-            {messages.length === 0 && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                className="flex flex-col items-center justify-center h-[60vh] text-center"
+    <div className="flex h-screen bg-black overflow-hidden">
+      {/* Sidebar */}
+      <AnimatePresence mode="wait">
+        {sidebarOpen && (
+          <motion.aside
+            initial={{ width: 0, opacity: 0 }}
+            animate={{ width: 300, opacity: 1 }}
+            exit={{ width: 0, opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+            className="flex flex-col border-r border-zinc-800 bg-zinc-950 overflow-hidden"
+          >
+            {/* Sidebar header */}
+            <div className="p-4 border-b border-zinc-800">
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={createNewConversation}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-violet-600 hover:bg-violet-500 rounded-lg text-white font-medium transition-colors"
               >
-                <motion.div
-                  animate={{
-                    y: [0, -10, 0],
-                    rotate: [0, 5, -5, 0]
-                  }}
-                  transition={{ duration: 4, repeat: Infinity }}
-                  className="text-6xl mb-6"
-                >
-                  🦉
-                </motion.div>
-                <h2 className="text-2xl font-medium text-zinc-300 mb-2">
-                  Welcome to Sage
-                </h2>
-                <p className="text-zinc-500 max-w-md">
-                  Your encrypted AI companion with memory. All messages are E2E encrypted
-                  through your private proxy. I remember our conversations.
-                </p>
-              </motion.div>
-            )}
+                <Plus className="w-4 h-4" />
+                New Conversation
+              </motion.button>
+            </div>
 
-            {messages.map((message, index) => (
-              <motion.div
-                key={message.id}
-                initial={{ opacity: 0, y: 20, scale: 0.95 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: -20, scale: 0.95 }}
-                transition={{
-                  type: 'spring',
-                  stiffness: 500,
-                  damping: 30,
-                  delay: index * 0.05
-                }}
-                className={`flex gap-3 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
-                {message.role === 'assistant' && (
-                  <Avatar className="w-8 h-8 border border-violet-500/30">
-                    <AvatarFallback className="bg-gradient-to-br from-violet-600 to-fuchsia-600 text-white text-sm">
-                      S
-                    </AvatarFallback>
-                  </Avatar>
-                )}
-                <Card className={`max-w-[80%] p-4 overflow-hidden ${
-                  message.role === 'user'
-                    ? 'bg-violet-600 text-white border-violet-500'
-                    : 'bg-zinc-800 border-zinc-700 text-zinc-100'
-                }`}>
-                  {message.role === 'assistant' ? (
-                    <div className="text-sm leading-relaxed prose prose-invert prose-sm max-w-none">
-                      {message.isTyping ? (
-                        <TypewriterText
-                          content={message.content}
-                          onComplete={() => markTypingComplete(message.id)}
-                        />
-                      ) : (
-                        <MarkdownContent content={message.content} />
-                      )}
+            {/* Search */}
+            <div className="p-3 border-b border-zinc-800">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+                <Input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search conversations..."
+                  className="pl-9 bg-zinc-900 border-zinc-700 focus:border-violet-500 text-sm"
+                />
+              </div>
+            </div>
+
+            {/* Search results or conversation list */}
+            <ScrollArea className="flex-1">
+              <div className="p-2">
+                <AnimatePresence mode="popLayout">
+                  {searchQuery && searchResults.length > 0 ? (
+                    // Search results
+                    <div className="space-y-1">
+                      <p className="text-xs text-zinc-500 px-2 py-1">Search Results</p>
+                      {searchResults.map((result, idx) => (
+                        <motion.button
+                          key={result.id}
+                          initial={{ opacity: 0, x: -20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: 20 }}
+                          transition={{ delay: idx * 0.03 }}
+                          onClick={() => {
+                            loadMessages(result.conversation_id);
+                            setSearchQuery('');
+                          }}
+                          className="w-full text-left p-3 rounded-lg hover:bg-zinc-800/50 transition-colors"
+                        >
+                          <p className="text-sm font-medium text-zinc-200 truncate">{result.conversation_title}</p>
+                          <p className="text-xs text-zinc-500 truncate mt-1">{result.content}</p>
+                        </motion.button>
+                      ))}
                     </div>
                   ) : (
-                    <div>
-                      {message.files && message.files.length > 0 && (
-                        <div className="flex flex-wrap gap-2 mb-2">
-                          {message.files.map(file => (
-                            <div key={file.id} className="flex items-center gap-1 bg-violet-700/50 rounded px-2 py-1">
-                              {file.preview ? (
-                                <img src={file.preview} alt={file.name} className="w-8 h-8 object-cover rounded" />
-                              ) : (
-                                getFileIcon(file.type)
-                              )}
-                              <span className="text-xs truncate max-w-[100px]">{file.name}</span>
+                    // Conversation list
+                    <div className="space-y-1">
+                      {conversations.map((convo, idx) => (
+                        <motion.div
+                          key={convo.id}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, scale: 0.9 }}
+                          transition={{ delay: idx * 0.02 }}
+                          className={`group relative rounded-lg transition-colors ${
+                            currentConversationId === convo.id
+                              ? 'bg-violet-600/20 border border-violet-500/30'
+                              : 'hover:bg-zinc-800/50'
+                          }`}
+                        >
+                          <button
+                            onClick={() => loadMessages(convo.id)}
+                            className="w-full text-left p-3"
+                          >
+                            <div className="flex items-start gap-2">
+                              <MessageSquare className="w-4 h-4 text-zinc-500 mt-0.5 flex-shrink-0" />
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-zinc-200 truncate">
+                                  {convo.title}
+                                </p>
+                                <p className="text-xs text-zinc-500 mt-0.5">
+                                  {formatDate(convo.updated_at)}
+                                </p>
+                              </div>
                             </div>
-                          ))}
+                          </button>
+
+                          {/* Delete button */}
+                          <motion.button
+                            initial={{ opacity: 0 }}
+                            whileHover={{ scale: 1.1 }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteConversation(convo.id);
+                            }}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 transition-all"
+                          >
+                            {deletingId === convo.id ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="w-4 h-4" />
+                            )}
+                          </motion.button>
+                        </motion.div>
+                      ))}
+
+                      {conversations.length === 0 && !searchQuery && (
+                        <div className="text-center py-8 text-zinc-500">
+                          <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                          <p className="text-sm">No conversations yet</p>
                         </div>
                       )}
-                      {message.content && (
-                        <p className="whitespace-pre-wrap text-sm leading-relaxed">
-                          {message.content}
-                        </p>
-                      )}
                     </div>
                   )}
-                </Card>
-                {message.role === 'user' && (
-                  <Avatar className="w-8 h-8 border border-zinc-700">
-                    <AvatarFallback className="bg-zinc-800 text-zinc-300 text-sm">
-                      U
-                    </AvatarFallback>
-                  </Avatar>
-                )}
-              </motion.div>
-            ))}
+                </AnimatePresence>
+              </div>
+            </ScrollArea>
+          </motion.aside>
+        )}
+      </AnimatePresence>
 
-            {isLoading && (
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="flex gap-3 justify-start"
+      {/* Main content */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Header */}
+        <motion.header
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-xl"
+        >
+          <div className="px-4 py-4 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                className="text-zinc-400 hover:text-white"
               >
-                <Avatar className="w-8 h-8 border border-violet-500/30">
-                  <AvatarFallback className="bg-gradient-to-br from-violet-600 to-fuchsia-600 text-white text-sm">
-                    S
-                  </AvatarFallback>
-                </Avatar>
-                <Card className="bg-zinc-800/50 border-zinc-700 p-4">
-                  <motion.div
-                    className="flex gap-1"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                  >
-                    {[0, 1, 2].map((i) => (
-                      <motion.div
-                        key={i}
-                        className="w-2 h-2 bg-violet-400 rounded-full"
-                        animate={{ y: [0, -8, 0] }}
-                        transition={{
-                          duration: 0.6,
-                          repeat: Infinity,
-                          delay: i * 0.15
-                        }}
-                      />
-                    ))}
-                  </motion.div>
-                </Card>
+                {sidebarOpen ? <ChevronLeft className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
+              </Button>
+              <motion.div
+                animate={{ rotate: [0, 10, -10, 0] }}
+                transition={{ duration: 2, repeat: Infinity, repeatDelay: 3 }}
+              >
+                <Sparkles className="w-6 h-6 text-violet-400" />
               </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-      </ScrollArea>
-
-      {/* Input */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="border-t border-zinc-800 bg-zinc-950/80 backdrop-blur-xl p-4"
-      >
-        <div className="max-w-4xl mx-auto">
-          {/* File previews */}
-          {attachedFiles.length > 0 && (
-            <div className="flex flex-wrap gap-2 mb-3">
-              {attachedFiles.map(file => (
-                <div
-                  key={file.id}
-                  className="relative group flex items-center gap-2 bg-zinc-800 rounded-lg px-3 py-2 border border-zinc-700"
-                >
-                  {file.preview ? (
-                    <img src={file.preview} alt={file.name} className="w-10 h-10 object-cover rounded" />
-                  ) : (
-                    getFileIcon(file.type)
-                  )}
-                  <div className="flex flex-col">
-                    <span className="text-xs text-zinc-300 truncate max-w-[120px]">{file.name}</span>
-                    <span className="text-xs text-zinc-500">{formatFileSize(file.size)}</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => removeFile(file.id)}
-                    className="absolute -top-1 -right-1 p-0.5 bg-zinc-700 hover:bg-red-600 rounded-full transition-colors"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
+              <h1 className="text-xl font-semibold bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent">
+                Sage
+              </h1>
             </div>
-          )}
+            <div className="flex items-center gap-2">
+              <motion.div
+                animate={{ scale: isConnected ? [1, 1.2, 1] : 1 }}
+                transition={{ duration: 1, repeat: isConnected ? Infinity : 0, repeatDelay: 2 }}
+              >
+                <Lock className={`w-4 h-4 ${isConnected ? 'text-emerald-400' : 'text-zinc-600'}`} />
+              </motion.div>
+              <span className="text-xs text-zinc-500">
+                {isConnected ? (useECDH ? 'ECDH Encrypted' : 'AES Encrypted') : 'Disconnected'}
+              </span>
+            </div>
+          </div>
+        </motion.header>
 
-          <form
-            onSubmit={(e) => { e.preventDefault(); sendMessage(); }}
-            className="flex gap-3"
-          >
-            {/* Hidden file input */}
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
-              onChange={handleFileSelect}
-              className="hidden"
-            />
-
-            {/* Attachment button */}
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isLoading || !isConnected}
-              className="border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200"
-            >
-              <Paperclip className="w-4 h-4" />
-            </Button>
-
-            <Input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask Sage anything..."
-              className="flex-1 bg-zinc-900 border-zinc-700 focus:border-violet-500 focus:ring-violet-500/20 text-zinc-100 placeholder:text-zinc-500"
-              disabled={isLoading || !isConnected}
-            />
-            <Button
-              type="submit"
-              disabled={isLoading || (!input.trim() && attachedFiles.length === 0) || !isConnected}
-              className="bg-violet-600 hover:bg-violet-500 text-white px-6"
-            >
-              {isLoading ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Send className="w-4 h-4" />
+        {/* Messages */}
+        <ScrollArea className="flex-1 p-4 bg-black" ref={scrollRef}>
+          <div className="max-w-4xl mx-auto space-y-4">
+            {/* Web search indicator */}
+            <AnimatePresence>
+              {webSearchQuery && (
+                <WebSearchIndicator query={webSearchQuery} isSearching={isWebSearching} />
               )}
-            </Button>
-          </form>
-          <p className="text-xs text-zinc-600 mt-2 text-center">
-            {useECDH ? 'Signal-style ECDH key exchange • AES-256-GCM encryption' : 'Messages encrypted with AES-256-GCM before leaving your device'}
-          </p>
-        </div>
-      </motion.div>
+            </AnimatePresence>
+
+            <AnimatePresence mode="popLayout">
+              {messages.length === 0 && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  className="flex flex-col items-center justify-center h-[60vh] text-center"
+                >
+                  <motion.div
+                    animate={{ y: [0, -10, 0], rotate: [0, 5, -5, 0] }}
+                    transition={{ duration: 4, repeat: Infinity }}
+                    className="text-6xl mb-6"
+                  >
+                    🦉
+                  </motion.div>
+                  <h2 className="text-2xl font-medium text-zinc-300 mb-2">Welcome to Sage</h2>
+                  <p className="text-zinc-500 max-w-md">
+                    Your encrypted AI companion with memory and web search.
+                    All messages are E2E encrypted. I remember our conversations.
+                  </p>
+                </motion.div>
+              )}
+
+              {messages.map((message, index) => (
+                <motion.div
+                  key={message.id}
+                  initial={{ opacity: 0, y: 20, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -20, scale: 0.95 }}
+                  transition={{ type: 'spring', stiffness: 500, damping: 30, delay: index * 0.02 }}
+                  className={`flex gap-3 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                >
+                  {message.role === 'assistant' && (
+                    <Avatar className="w-8 h-8 border border-violet-500/30">
+                      <AvatarFallback className="bg-gradient-to-br from-violet-600 to-fuchsia-600 text-white text-sm">
+                        S
+                      </AvatarFallback>
+                    </Avatar>
+                  )}
+                  <Card className={`max-w-[80%] p-4 overflow-hidden ${
+                    message.role === 'user'
+                      ? 'bg-violet-600 text-white border-violet-500'
+                      : 'bg-zinc-800 border-zinc-700 text-zinc-100'
+                  }`}>
+                    {message.role === 'assistant' ? (
+                      <div className="text-sm leading-relaxed prose prose-invert prose-sm max-w-none">
+                        {message.isTyping ? (
+                          <TypewriterText content={message.content} onComplete={() => markTypingComplete(message.id)} />
+                        ) : (
+                          <MarkdownContent content={message.content} />
+                        )}
+                        {message.sources && <SourcesPanel sources={message.sources} />}
+                      </div>
+                    ) : (
+                      <div>
+                        {message.files && message.files.length > 0 && (
+                          <div className="flex flex-wrap gap-2 mb-2">
+                            {message.files.map(file => (
+                              <div key={file.id} className="flex items-center gap-1 bg-violet-700/50 rounded px-2 py-1">
+                                {file.preview ? (
+                                  <img src={file.preview} alt={file.name} className="w-8 h-8 object-cover rounded" />
+                                ) : (
+                                  getFileIcon(file.type)
+                                )}
+                                <span className="text-xs truncate max-w-[100px]">{file.name}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {message.content && (
+                          <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</p>
+                        )}
+                      </div>
+                    )}
+                  </Card>
+                  {message.role === 'user' && (
+                    <Avatar className="w-8 h-8 border border-zinc-700">
+                      <AvatarFallback className="bg-zinc-800 text-zinc-300 text-sm">U</AvatarFallback>
+                    </Avatar>
+                  )}
+                </motion.div>
+              ))}
+
+              {isLoading && (
+                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="flex gap-3 justify-start">
+                  <Avatar className="w-8 h-8 border border-violet-500/30">
+                    <AvatarFallback className="bg-gradient-to-br from-violet-600 to-fuchsia-600 text-white text-sm">S</AvatarFallback>
+                  </Avatar>
+                  <Card className="bg-zinc-800/50 border-zinc-700 p-4">
+                    <motion.div className="flex gap-1" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                      {[0, 1, 2].map((i) => (
+                        <motion.div
+                          key={i}
+                          className="w-2 h-2 bg-violet-400 rounded-full"
+                          animate={{ y: [0, -8, 0] }}
+                          transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.15 }}
+                        />
+                      ))}
+                    </motion.div>
+                  </Card>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </ScrollArea>
+
+        {/* Input */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="border-t border-zinc-800 bg-zinc-950/80 backdrop-blur-xl p-4"
+        >
+          <div className="max-w-4xl mx-auto">
+            {attachedFiles.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-3">
+                {attachedFiles.map(file => (
+                  <div key={file.id} className="relative group flex items-center gap-2 bg-zinc-800 rounded-lg px-3 py-2 border border-zinc-700">
+                    {file.preview ? (
+                      <img src={file.preview} alt={file.name} className="w-10 h-10 object-cover rounded" />
+                    ) : (
+                      getFileIcon(file.type)
+                    )}
+                    <div className="flex flex-col">
+                      <span className="text-xs text-zinc-300 truncate max-w-[120px]">{file.name}</span>
+                      <span className="text-xs text-zinc-500">{formatFileSize(file.size)}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeFile(file.id)}
+                      className="absolute -top-1 -right-1 p-0.5 bg-zinc-700 hover:bg-red-600 rounded-full transition-colors"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <form onSubmit={(e) => { e.preventDefault(); sendMessage(); }} className="flex gap-3">
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
+                onChange={handleFileSelect}
+                className="hidden"
+              />
+
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isLoading || !isConnected}
+                className="border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200"
+              >
+                <Paperclip className="w-4 h-4" />
+              </Button>
+
+              <Input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder="Ask Sage anything..."
+                className="flex-1 bg-zinc-900 border-zinc-700 focus:border-violet-500 focus:ring-violet-500/20 text-zinc-100 placeholder:text-zinc-500"
+                disabled={isLoading || !isConnected}
+              />
+              <Button
+                type="submit"
+                disabled={isLoading || (!input.trim() && attachedFiles.length === 0) || !isConnected}
+                className="bg-violet-600 hover:bg-violet-500 text-white px-6"
+              >
+                {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              </Button>
+            </form>
+            <p className="text-xs text-zinc-600 mt-2 text-center">
+              {useECDH ? 'Signal-style ECDH key exchange • AES-256-GCM encryption' : 'Messages encrypted with AES-256-GCM'}
+            </p>
+          </div>
+        </motion.div>
+      </div>
     </div>
   );
 }

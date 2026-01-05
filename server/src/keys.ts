@@ -16,6 +16,7 @@ interface ServerKeys {
 }
 
 interface ClientSession {
+  tenantId: string;
   sharedSecret: Buffer;
   createdAt: number;
 }
@@ -133,7 +134,15 @@ export function performKeyExchange(clientPublicKeyBase64: string): string {
 
   // Store session (use client public key as session ID)
   const sessionId = clientPublicKeyBase64.slice(0, 32);
+
+  // Generate tenantId from SHA256 of client public key (consistent per client)
+  const tenantId = crypto.createHash('sha256')
+    .update(clientPublicKeyBase64)
+    .digest('hex')
+    .slice(0, 16);
+
   clientSessions.set(sessionId, {
+    tenantId,
     sharedSecret: aesKey,
     createdAt: Date.now(),
   });
@@ -147,6 +156,12 @@ export function performKeyExchange(clientPublicKeyBase64: string): string {
 export function getSharedSecret(sessionId: string): Buffer | null {
   const session = clientSessions.get(sessionId);
   return session?.sharedSecret || null;
+}
+
+// Get tenant ID for a session
+export function getTenantId(sessionId: string): string | null {
+  const session = clientSessions.get(sessionId);
+  return session?.tenantId || null;
 }
 
 // Encrypt data for client

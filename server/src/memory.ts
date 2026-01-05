@@ -11,6 +11,7 @@ interface QdrantPoint {
     content: string;
     timestamp: string;
     sessionId: string;
+    tenantId: string;
   };
 }
 
@@ -79,7 +80,7 @@ export class Memory {
     return vector.map(v => v / magnitude);
   }
 
-  async store(sessionId: string, role: 'user' | 'assistant', content: string): Promise<void> {
+  async store(tenantId: string, sessionId: string, role: 'user' | 'assistant', content: string): Promise<void> {
     await this.init();
 
     try {
@@ -91,7 +92,8 @@ export class Memory {
           role,
           content,
           timestamp: new Date().toISOString(),
-          sessionId
+          sessionId,
+          tenantId
         }
       };
 
@@ -105,7 +107,7 @@ export class Memory {
     }
   }
 
-  async recall(query: string, limit = 5): Promise<SearchResult[]> {
+  async recall(tenantId: string, query: string, limit = 5): Promise<SearchResult[]> {
     await this.init();
 
     try {
@@ -117,7 +119,10 @@ export class Memory {
         body: JSON.stringify({
           vector,
           limit,
-          with_payload: true
+          with_payload: true,
+          filter: {
+            must: [{ key: 'tenantId', match: { value: tenantId } }]
+          }
         })
       });
 
@@ -129,7 +134,7 @@ export class Memory {
     }
   }
 
-  async getRecentContext(sessionId: string, limit = 10): Promise<string> {
+  async getRecentContext(tenantId: string, sessionId: string, limit = 10): Promise<string> {
     await this.init();
 
     try {
@@ -138,7 +143,10 @@ export class Memory {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           filter: {
-            must: [{ key: 'sessionId', match: { value: sessionId } }]
+            must: [
+              { key: 'tenantId', match: { value: tenantId } },
+              { key: 'sessionId', match: { value: sessionId } }
+            ]
           },
           limit,
           with_payload: true,
