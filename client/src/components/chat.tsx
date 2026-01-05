@@ -990,8 +990,7 @@ export function Chat() {
                       </AvatarFallback>
                     </Avatar>
                   )}
-                  <div className="relative">
-                    <Card className={`max-w-[80%] p-4 overflow-hidden ${
+                  <Card className={`relative max-w-[80%] p-4 pb-6 overflow-hidden ${
                       message.role === 'user'
                         ? 'bg-violet-600 text-white border-violet-500'
                         : 'bg-zinc-800 border-zinc-700 text-zinc-100'
@@ -1026,25 +1025,28 @@ export function Chat() {
                         )}
                       </div>
                     )}
-                  </Card>
-                    {/* Fork button - bottom right of card */}
+                    {/* Fork button - inside card, bottom right */}
                     {currentConversationId && (
                       <motion.button
                         whileHover={{ scale: 1.1 }}
                         whileTap={{ scale: 0.9 }}
                         onClick={() => forkConversation(message.id)}
                         disabled={forkingMessageId === message.id}
-                        className="absolute -bottom-2 -right-2 p-1.5 rounded-full bg-zinc-700 hover:bg-emerald-600 text-zinc-400 hover:text-white border border-zinc-600 hover:border-emerald-500 shadow-lg transition-all"
+                        className={`absolute bottom-1.5 right-1.5 p-1 rounded hover:bg-emerald-600 transition-all ${
+                          message.role === 'user'
+                            ? 'text-violet-300 hover:text-white'
+                            : 'text-zinc-500 hover:text-white'
+                        }`}
                         title="Branch from here"
                       >
                         {forkingMessageId === message.id ? (
-                          <Loader2 className="w-3 h-3 animate-spin" />
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
                         ) : (
-                          <GitBranch className="w-3 h-3" />
+                          <GitBranch className="w-3.5 h-3.5" />
                         )}
                       </motion.button>
                     )}
-                  </div>
+                  </Card>
                   {message.role === 'user' && (
                     <Avatar className="w-8 h-8 border border-zinc-700">
                       <AvatarFallback className="bg-zinc-800 text-zinc-300 text-sm">U</AvatarFallback>
