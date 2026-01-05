@@ -794,15 +794,17 @@ export function Chat() {
                             </div>
                           </button>
 
-                          {/* Delete button */}
+                          {/* Delete button - always visible */}
                           <motion.button
-                            initial={{ opacity: 0 }}
                             whileHover={{ scale: 1.1 }}
+                            whileTap={{ scale: 0.9 }}
                             onClick={(e) => {
                               e.stopPropagation();
-                              deleteConversation(convo.id);
+                              if (confirm('Delete this conversation?')) {
+                                deleteConversation(convo.id);
+                              }
                             }}
-                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 transition-all"
+                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md hover:bg-red-500/20 text-zinc-500 hover:text-red-400 transition-all"
                           >
                             {deletingId === convo.id ? (
                               <Loader2 className="w-4 h-4 animate-spin" />
