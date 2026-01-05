@@ -129,13 +129,15 @@ async function callClaudeCLI(prompt: string): Promise<string> {
     fs.writeFileSync(tmpFile, prompt);
 
     // Enable web search and fetch tools for online research
-    const cmd = `claude -p --output-format text --allowedTools "WebSearch,WebFetch" "$(cat ${tmpFile})"`;
+    // Pipe the file content to stdin instead of using command substitution
+    const cmd = `cat "${tmpFile}" | claude -p --output-format text --allowedTools "WebSearch,WebFetch"`;
 
     const result = execSync(cmd, {
       encoding: 'utf8',
       timeout: 180000, // 3 min timeout for web searches
       maxBuffer: 10 * 1024 * 1024,
-      env: process.env
+      env: process.env,
+      shell: '/bin/sh'
     });
 
     // Cleanup
@@ -322,7 +324,7 @@ app.post('/proxy/stream', async (c) => {
         const encoder = new TextEncoder();
         let fullResponse = '';
 
-        const proc = spawn('sh', ['-c', `claude -p --output-format text --allowedTools "WebSearch,WebFetch" "$(cat ${tmpFile})"`], {
+        const proc = spawn('sh', ['-c', `cat "${tmpFile}" | claude -p --output-format text --allowedTools "WebSearch,WebFetch"`], {
           env: process.env,
           stdio: ['pipe', 'pipe', 'pipe']
         });
