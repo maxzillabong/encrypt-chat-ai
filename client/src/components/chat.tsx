@@ -7,6 +7,16 @@ import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { encrypt, decrypt } from '@/lib/crypto';
 import {
   getOrCreateKeyPair,
@@ -335,6 +345,8 @@ export function Chat() {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [conversationToDelete, setConversationToDelete] = useState<Conversation | null>(null);
 
   // Web search state
   const [webSearchQuery, setWebSearchQuery] = useState<string | null>(null);
@@ -411,12 +423,19 @@ export function Chat() {
     setCurrentConversationId(null);
   }, []);
 
+  // Open delete dialog
+  const confirmDelete = useCallback((convo: Conversation) => {
+    setConversationToDelete(convo);
+    setDeleteDialogOpen(true);
+  }, []);
+
   // Delete conversation
-  const deleteConversation = useCallback(async (conversationId: string) => {
-    if (!sessionId || !sharedKey) return;
+  const deleteConversation = useCallback(async () => {
+    if (!sessionId || !sharedKey || !conversationToDelete) return;
+    const conversationId = conversationToDelete.id;
     setDeletingId(conversationId);
     try {
-      await callAPI('/api/conversations/delete', { sessionId, conversationId });
+      await callAPI('/api/conversations/delete', { conversationId });
       setConversations(prev => prev.filter(c => c.id !== conversationId));
       if (currentConversationId === conversationId) {
         setMessages([]);
@@ -426,8 +445,10 @@ export function Chat() {
       console.error('[Sage] Failed to delete conversation:', error);
     } finally {
       setDeletingId(null);
+      setDeleteDialogOpen(false);
+      setConversationToDelete(null);
     }
-  }, [sessionId, sharedKey, callAPI, currentConversationId]);
+  }, [sessionId, sharedKey, callAPI, currentConversationId, conversationToDelete]);
 
   // Search conversations
   const searchConversations = useCallback(async (query: string) => {
@@ -800,9 +821,7 @@ export function Chat() {
                             whileTap={{ scale: 0.9 }}
                             onClick={(e) => {
                               e.stopPropagation();
-                              if (confirm('Delete this conversation?')) {
-                                deleteConversation(convo.id);
-                              }
+                              confirmDelete(convo);
                             }}
                             className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md hover:bg-red-500/20 text-zinc-500 hover:text-red-400 transition-all"
                           >
@@ -1062,6 +1081,30 @@ export function Chat() {
           </div>
         </motion.div>
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Conversation</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete "{conversationToDelete?.title}"? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setConversationToDelete(null)}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={deleteConversation}
+              className="bg-red-600 hover:bg-red-700 text-white"
+            >
+              {deletingId ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

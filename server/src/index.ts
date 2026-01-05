@@ -574,20 +574,35 @@ app.get('/health', (c) => c.json({ status: 'ok', service: 'sage-proxy', encrypti
 // Conversation Management API (encrypted)
 // ============================================
 
+// Helper to decrypt API request payload
+async function decryptAPIRequest<T>(c: any): Promise<{ sessionId: string; tenantId: string; data: T }> {
+  const body = await c.req.json<{ sessionId: string; payload: string }>();
+  const { sessionId, payload } = body;
+
+  const tenantId = getTenantId(sessionId);
+  if (!tenantId) {
+    throw new Error('Invalid session');
+  }
+
+  const decrypted = decryptFromClient(payload, sessionId);
+  const data = JSON.parse(decrypted) as T;
+
+  return { sessionId, tenantId, data };
+}
+
 // List all conversations for a tenant
 app.post('/api/conversations/list', async (c) => {
   try {
-    const { sessionId } = await c.req.json<{ sessionId: string }>();
-    const tenantId = getTenantId(sessionId);
-    if (!tenantId) {
-      return c.json({ error: 'Invalid session' }, 401);
-    }
+    const { sessionId, tenantId } = await decryptAPIRequest<{ sessionId: string }>(c);
 
     const conversations = await db.getConversations(tenantId);
     const encrypted = encryptForClient(JSON.stringify(conversations), sessionId);
     return c.json({ payload: encrypted });
   } catch (error: any) {
     console.error('[API] List conversations error:', error.message);
+    if (error.message === 'Invalid session') {
+      return c.json({ error: 'Invalid session' }, 401);
+    }
     return c.json({ error: 'Failed to list conversations' }, 500);
   }
 });
@@ -595,17 +610,16 @@ app.post('/api/conversations/list', async (c) => {
 // Create a new conversation
 app.post('/api/conversations/create', async (c) => {
   try {
-    const { sessionId, title } = await c.req.json<{ sessionId: string; title?: string }>();
-    const tenantId = getTenantId(sessionId);
-    if (!tenantId) {
-      return c.json({ error: 'Invalid session' }, 401);
-    }
+    const { sessionId, tenantId, data } = await decryptAPIRequest<{ title?: string }>(c);
 
-    const conversation = await db.createConversation(tenantId, title);
+    const conversation = await db.createConversation(tenantId, data.title);
     const encrypted = encryptForClient(JSON.stringify(conversation), sessionId);
     return c.json({ payload: encrypted });
   } catch (error: any) {
     console.error('[API] Create conversation error:', error.message);
+    if (error.message === 'Invalid session') {
+      return c.json({ error: 'Invalid session' }, 401);
+    }
     return c.json({ error: 'Failed to create conversation' }, 500);
   }
 });
@@ -613,23 +627,22 @@ app.post('/api/conversations/create', async (c) => {
 // Get messages for a conversation
 app.post('/api/conversations/messages', async (c) => {
   try {
-    const { sessionId, conversationId } = await c.req.json<{ sessionId: string; conversationId: string }>();
-    const tenantId = getTenantId(sessionId);
-    if (!tenantId) {
-      return c.json({ error: 'Invalid session' }, 401);
-    }
+    const { sessionId, tenantId, data } = await decryptAPIRequest<{ conversationId: string }>(c);
 
     // Verify conversation belongs to tenant
-    const convo = await db.getConversation(conversationId, tenantId);
+    const convo = await db.getConversation(data.conversationId, tenantId);
     if (!convo) {
       return c.json({ error: 'Conversation not found' }, 404);
     }
 
-    const messages = await db.getMessages(conversationId);
+    const messages = await db.getMessages(data.conversationId);
     const encrypted = encryptForClient(JSON.stringify(messages), sessionId);
     return c.json({ payload: encrypted });
   } catch (error: any) {
     console.error('[API] Get messages error:', error.message);
+    if (error.message === 'Invalid session') {
+      return c.json({ error: 'Invalid session' }, 401);
+    }
     return c.json({ error: 'Failed to get messages' }, 500);
   }
 });
@@ -637,13 +650,9 @@ app.post('/api/conversations/messages', async (c) => {
 // Update conversation title
 app.post('/api/conversations/update', async (c) => {
   try {
-    const { sessionId, conversationId, title } = await c.req.json<{ sessionId: string; conversationId: string; title: string }>();
-    const tenantId = getTenantId(sessionId);
-    if (!tenantId) {
-      return c.json({ error: 'Invalid session' }, 401);
-    }
+    const { sessionId, tenantId, data } = await decryptAPIRequest<{ conversationId: string; title: string }>(c);
 
-    const conversation = await db.updateConversationTitle(conversationId, tenantId, title);
+    const conversation = await db.updateConversationTitle(data.conversationId, tenantId, data.title);
     if (!conversation) {
       return c.json({ error: 'Conversation not found' }, 404);
     }
@@ -652,6 +661,9 @@ app.post('/api/conversations/update', async (c) => {
     return c.json({ payload: encrypted });
   } catch (error: any) {
     console.error('[API] Update conversation error:', error.message);
+    if (error.message === 'Invalid session') {
+      return c.json({ error: 'Invalid session' }, 401);
+    }
     return c.json({ error: 'Failed to update conversation' }, 500);
   }
 });
@@ -659,13 +671,9 @@ app.post('/api/conversations/update', async (c) => {
 // Delete a conversation (soft delete)
 app.post('/api/conversations/delete', async (c) => {
   try {
-    const { sessionId, conversationId } = await c.req.json<{ sessionId: string; conversationId: string }>();
-    const tenantId = getTenantId(sessionId);
-    if (!tenantId) {
-      return c.json({ error: 'Invalid session' }, 401);
-    }
+    const { sessionId, tenantId, data } = await decryptAPIRequest<{ conversationId: string }>(c);
 
-    const deleted = await db.deleteConversation(conversationId, tenantId);
+    const deleted = await db.deleteConversation(data.conversationId, tenantId);
     if (!deleted) {
       return c.json({ error: 'Conversation not found' }, 404);
     }
@@ -674,6 +682,9 @@ app.post('/api/conversations/delete', async (c) => {
     return c.json({ payload: encrypted });
   } catch (error: any) {
     console.error('[API] Delete conversation error:', error.message);
+    if (error.message === 'Invalid session') {
+      return c.json({ error: 'Invalid session' }, 401);
+    }
     return c.json({ error: 'Failed to delete conversation' }, 500);
   }
 });
@@ -681,17 +692,16 @@ app.post('/api/conversations/delete', async (c) => {
 // Search across all conversations
 app.post('/api/conversations/search', async (c) => {
   try {
-    const { sessionId, query } = await c.req.json<{ sessionId: string; query: string }>();
-    const tenantId = getTenantId(sessionId);
-    if (!tenantId) {
-      return c.json({ error: 'Invalid session' }, 401);
-    }
+    const { sessionId, tenantId, data } = await decryptAPIRequest<{ query: string }>(c);
 
-    const results = await db.searchMessages(tenantId, query);
+    const results = await db.searchMessages(tenantId, data.query);
     const encrypted = encryptForClient(JSON.stringify(results), sessionId);
     return c.json({ payload: encrypted });
   } catch (error: any) {
     console.error('[API] Search error:', error.message);
+    if (error.message === 'Invalid session') {
+      return c.json({ error: 'Invalid session' }, 401);
+    }
     return c.json({ error: 'Failed to search' }, 500);
   }
 });
