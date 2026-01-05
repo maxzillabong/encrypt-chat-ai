@@ -1034,21 +1034,20 @@ export function Chat() {
                       </div>
                     )}
                   </Card>
-                    {/* Fork button - appears on hover */}
+                    {/* Fork button - bottom right of card */}
                     {currentConversationId && (
                       <motion.button
-                        initial={{ opacity: 0, scale: 0.8 }}
                         whileHover={{ scale: 1.1 }}
                         whileTap={{ scale: 0.9 }}
                         onClick={() => forkConversation(message.id)}
                         disabled={forkingMessageId === message.id}
-                        className="absolute -right-2 top-1/2 -translate-y-1/2 translate-x-full p-1.5 rounded-md bg-zinc-800 hover:bg-emerald-600 text-zinc-400 hover:text-white border border-zinc-700 hover:border-emerald-500 opacity-0 group-hover/message:opacity-100 transition-all"
+                        className="absolute -bottom-2 -right-2 p-1.5 rounded-full bg-zinc-700 hover:bg-emerald-600 text-zinc-400 hover:text-white border border-zinc-600 hover:border-emerald-500 shadow-lg transition-all"
                         title="Branch from here"
                       >
                         {forkingMessageId === message.id ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <Loader2 className="w-3 h-3 animate-spin" />
                         ) : (
-                          <GitBranch className="w-3.5 h-3.5" />
+                          <GitBranch className="w-3 h-3" />
                         )}
                       </motion.button>
                     )}
