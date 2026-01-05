@@ -8,6 +8,8 @@ CREATE TABLE conversations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id VARCHAR(32) NOT NULL,
     title VARCHAR(255) NOT NULL DEFAULT 'New Conversation',
+    parent_id UUID REFERENCES conversations(id) ON DELETE SET NULL,
+    forked_from_message_id UUID,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     deleted_at TIMESTAMP WITH TIME ZONE DEFAULT NULL
@@ -26,8 +28,16 @@ CREATE TABLE messages (
 CREATE INDEX idx_conversations_tenant ON conversations(tenant_id);
 CREATE INDEX idx_conversations_updated ON conversations(updated_at DESC);
 CREATE INDEX idx_conversations_deleted ON conversations(deleted_at) WHERE deleted_at IS NULL;
+CREATE INDEX idx_conversations_parent ON conversations(parent_id) WHERE parent_id IS NOT NULL;
 CREATE INDEX idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX idx_messages_created ON messages(created_at);
+
+-- Add foreign key for forked_from_message_id after messages table exists
+ALTER TABLE conversations
+    ADD CONSTRAINT fk_forked_message
+    FOREIGN KEY (forked_from_message_id)
+    REFERENCES messages(id)
+    ON DELETE SET NULL;
 
 -- Full-text search index on message content
 CREATE INDEX idx_messages_content_trgm ON messages USING gin(content gin_trgm_ops);

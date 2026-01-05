@@ -723,6 +723,37 @@ app.post('/api/conversations/delete', async (c) => {
   }
 });
 
+// Fork a conversation from a specific message (like git branch)
+app.post('/api/conversations/fork', async (c) => {
+  try {
+    const { sessionId, tenantId, data } = await decryptAPIRequest<{
+      conversationId: string;
+      messageId: string;
+      title?: string;
+    }>(c);
+
+    const forkedConvo = await db.forkConversation(
+      data.conversationId,
+      data.messageId,
+      tenantId,
+      data.title
+    );
+
+    if (!forkedConvo) {
+      return c.json({ error: 'Conversation or message not found' }, 404);
+    }
+
+    const encrypted = encryptForClient(JSON.stringify(forkedConvo), sessionId);
+    return c.json({ payload: encrypted });
+  } catch (error: any) {
+    console.error('[API] Fork conversation error:', error.message);
+    if (error.message === 'Invalid session') {
+      return c.json({ error: 'Invalid session' }, 401);
+    }
+    return c.json({ error: 'Failed to fork conversation' }, 500);
+  }
+});
+
 // Search across all conversations
 app.post('/api/conversations/search', async (c) => {
   try {

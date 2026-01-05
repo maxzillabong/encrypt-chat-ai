@@ -28,6 +28,8 @@ export interface Conversation {
   id: string;
   tenant_id: string;
   title: string;
+  parent_id: string | null;
+  forked_from_message_id: string | null;
   created_at: Date;
   updated_at: Date;
   deleted_at: Date | null;
@@ -147,6 +149,85 @@ export const db = {
     return messages
       .map(m => `${m.role}: ${m.content}`)
       .join('\n\n');
+  },
+
+  /**
+   * Fork a conversation from a specific message
+   * Creates a new conversation with messages up to and including the specified message
+   */
+  async forkConversation(
+    conversationId: string,
+    messageId: string,
+    tenantId: string,
+    newTitle?: string
+  ): Promise<Conversation | null> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Get the original conversation
+      const originalConvo = await client.query(
+        `SELECT * FROM conversations WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
+        [conversationId, tenantId]
+      );
+      if (originalConvo.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+
+      // Get the message to fork from
+      const forkMessage = await client.query(
+        `SELECT * FROM messages WHERE id = $1 AND conversation_id = $2`,
+        [messageId, conversationId]
+      );
+      if (forkMessage.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+
+      // Create new conversation with parent reference
+      const title = newTitle || `${originalConvo.rows[0].title} (branch)`;
+      const newConvo = await client.query(
+        `INSERT INTO conversations (tenant_id, title, parent_id, forked_from_message_id)
+         VALUES ($1, $2, $3, $4)
+         RETURNING *`,
+        [tenantId, title, conversationId, messageId]
+      );
+
+      // Copy all messages up to and including the fork point
+      await client.query(
+        `INSERT INTO messages (conversation_id, role, content, created_at)
+         SELECT $1, role, content, created_at
+         FROM messages
+         WHERE conversation_id = $2
+         AND created_at <= (SELECT created_at FROM messages WHERE id = $3)
+         ORDER BY created_at ASC`,
+        [newConvo.rows[0].id, conversationId, messageId]
+      );
+
+      await client.query('COMMIT');
+      console.log(`[Database] Forked conversation ${conversationId} at message ${messageId} -> ${newConvo.rows[0].id}`);
+      return newConvo.rows[0];
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('[Database] Fork error:', err);
+      throw err;
+    } finally {
+      client.release();
+    }
+  },
+
+  /**
+   * Get child conversations (branches) of a conversation
+   */
+  async getConversationBranches(conversationId: string, tenantId: string): Promise<Conversation[]> {
+    const result = await pool.query(
+      `SELECT * FROM conversations
+       WHERE parent_id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+       ORDER BY created_at DESC`,
+      [conversationId, tenantId]
+    );
+    return result.rows;
   },
 
   /**

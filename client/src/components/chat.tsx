@@ -29,7 +29,8 @@ import {
 import {
   Send, Lock, Loader2, Sparkles, Copy, Check, Paperclip, X, FileText,
   Image as ImageIcon, FileSpreadsheet, Plus, Search, Trash2, MessageSquare,
-  ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Globe, ExternalLink
+  ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Globe, ExternalLink,
+  GitBranch, CornerDownRight
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -59,6 +60,8 @@ interface Conversation {
   id: string;
   tenant_id: string;
   title: string;
+  parent_id: string | null;
+  forked_from_message_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -348,6 +351,7 @@ export function Chat() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [conversationToDelete, setConversationToDelete] = useState<Conversation | null>(null);
   const [headerCollapsed, setHeaderCollapsed] = useState(false);
+  const [forkingMessageId, setForkingMessageId] = useState<string | null>(null);
 
   // Web search state
   const [webSearchQuery, setWebSearchQuery] = useState<string | null>(null);
@@ -450,6 +454,25 @@ export function Chat() {
       setConversationToDelete(null);
     }
   }, [sessionId, sharedKey, callAPI, currentConversationId, conversationToDelete]);
+
+  // Fork conversation from a message
+  const forkConversation = useCallback(async (messageId: string) => {
+    if (!sessionId || !sharedKey || !currentConversationId) return;
+    setForkingMessageId(messageId);
+    try {
+      const forkedConvo = await callAPI('/api/conversations/fork', {
+        conversationId: currentConversationId,
+        messageId,
+      });
+      // Load the forked conversation
+      await loadMessages(forkedConvo.id);
+      await loadConversations(); // Refresh list
+    } catch (error) {
+      console.error('[Sage] Failed to fork conversation:', error);
+    } finally {
+      setForkingMessageId(null);
+    }
+  }, [sessionId, sharedKey, callAPI, currentConversationId, loadMessages, loadConversations]);
 
   // Search conversations
   const searchConversations = useCallback(async (query: string) => {
@@ -797,18 +820,27 @@ export function Chat() {
                             currentConversationId === convo.id
                               ? 'bg-violet-600/20 border border-violet-500/30'
                               : 'hover:bg-zinc-800/50'
-                          }`}
+                          } ${convo.parent_id ? 'ml-3' : ''}`}
                         >
                           <button
                             onClick={() => loadMessages(convo.id)}
                             className="w-full text-left p-3"
                           >
                             <div className="flex items-start gap-2">
-                              <MessageSquare className="w-4 h-4 text-zinc-500 mt-0.5 flex-shrink-0" />
+                              {convo.parent_id ? (
+                                <CornerDownRight className="w-4 h-4 text-emerald-500 mt-0.5 flex-shrink-0" />
+                              ) : (
+                                <MessageSquare className="w-4 h-4 text-zinc-500 mt-0.5 flex-shrink-0" />
+                              )}
                               <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium text-zinc-200 truncate">
-                                  {convo.title}
-                                </p>
+                                <div className="flex items-center gap-1.5">
+                                  <p className="text-sm font-medium text-zinc-200 truncate">
+                                    {convo.title}
+                                  </p>
+                                  {convo.parent_id && (
+                                    <GitBranch className="w-3 h-3 text-emerald-500 flex-shrink-0" />
+                                  )}
+                                </div>
                                 <p className="text-xs text-zinc-500 mt-0.5">
                                   {formatDate(convo.updated_at)}
                                 </p>
@@ -986,7 +1018,7 @@ export function Chat() {
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: -20, scale: 0.95 }}
                   transition={{ type: 'spring', stiffness: 500, damping: 30, delay: index * 0.02 }}
-                  className={`flex gap-3 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                  className={`group/message flex gap-3 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
                   {message.role === 'assistant' && (
                     <Avatar className="w-8 h-8 border border-violet-500/30">
@@ -995,11 +1027,12 @@ export function Chat() {
                       </AvatarFallback>
                     </Avatar>
                   )}
-                  <Card className={`max-w-[80%] p-4 overflow-hidden ${
-                    message.role === 'user'
-                      ? 'bg-violet-600 text-white border-violet-500'
-                      : 'bg-zinc-800 border-zinc-700 text-zinc-100'
-                  }`}>
+                  <div className="relative">
+                    <Card className={`max-w-[80%] p-4 overflow-hidden ${
+                      message.role === 'user'
+                        ? 'bg-violet-600 text-white border-violet-500'
+                        : 'bg-zinc-800 border-zinc-700 text-zinc-100'
+                    }`}>
                     {message.role === 'assistant' ? (
                       <div className="text-sm leading-relaxed prose prose-invert prose-sm max-w-none">
                         {message.isTyping ? (
@@ -1031,6 +1064,25 @@ export function Chat() {
                       </div>
                     )}
                   </Card>
+                    {/* Fork button - appears on hover */}
+                    {currentConversationId && (
+                      <motion.button
+                        initial={{ opacity: 0, scale: 0.8 }}
+                        whileHover={{ scale: 1.1 }}
+                        whileTap={{ scale: 0.9 }}
+                        onClick={() => forkConversation(message.id)}
+                        disabled={forkingMessageId === message.id}
+                        className="absolute -right-2 top-1/2 -translate-y-1/2 translate-x-full p-1.5 rounded-md bg-zinc-800 hover:bg-emerald-600 text-zinc-400 hover:text-white border border-zinc-700 hover:border-emerald-500 opacity-0 group-hover/message:opacity-100 transition-all"
+                        title="Branch from here"
+                      >
+                        {forkingMessageId === message.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <GitBranch className="w-3.5 h-3.5" />
+                        )}
+                      </motion.button>
+                    )}
+                  </div>
                   {message.role === 'user' && (
                     <Avatar className="w-8 h-8 border border-zinc-700">
                       <AvatarFallback className="bg-zinc-800 text-zinc-300 text-sm">U</AvatarFallback>
