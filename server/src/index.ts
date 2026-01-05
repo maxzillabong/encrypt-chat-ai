@@ -575,8 +575,8 @@ app.get('/health', (c) => c.json({ status: 'ok', service: 'sage-proxy', encrypti
 // ============================================
 
 // Helper to decrypt API request payload
-async function decryptAPIRequest<T>(c: any): Promise<{ sessionId: string; tenantId: string; data: T }> {
-  const body = await c.req.json<{ sessionId: string; payload: string }>();
+async function decryptAPIRequest<T>(c: { req: { json: () => Promise<{ sessionId: string; payload: string }> } }): Promise<{ sessionId: string; tenantId: string; data: T }> {
+  const body = await c.req.json();
   const { sessionId, payload } = body;
 
   const tenantId = getTenantId(sessionId);
