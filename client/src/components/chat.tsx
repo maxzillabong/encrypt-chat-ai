@@ -271,29 +271,6 @@ function MarkdownContent({ content }: { content: string }) {
   );
 }
 
-// Web search indicator component
-function WebSearchIndicator({ query, isSearching }: { query: string; isSearching: boolean }) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, height: 0 }}
-      animate={{ opacity: 1, height: 'auto' }}
-      exit={{ opacity: 0, height: 0 }}
-      className="flex items-center gap-2 px-3 py-2 bg-blue-500/10 border border-blue-500/30 rounded-lg mb-2"
-    >
-      <motion.div
-        animate={isSearching ? { rotate: 360 } : {}}
-        transition={{ duration: 1, repeat: isSearching ? Infinity : 0, ease: 'linear' }}
-      >
-        <Globe className="w-4 h-4 text-blue-400" />
-      </motion.div>
-      <span className="text-sm text-blue-300">
-        {isSearching ? 'Searching: ' : 'Searched: '}
-        <span className="font-medium">{query}</span>
-      </span>
-    </motion.div>
-  );
-}
-
 // Sources panel
 function SourcesPanel({ sources }: { sources: WebSource[] }) {
   if (!sources || sources.length === 0) return null;
@@ -981,13 +958,6 @@ export function Chat() {
         {/* Messages */}
         <ScrollArea className="flex-1 min-h-0 p-4 bg-black" ref={scrollRef}>
           <div className="max-w-4xl mx-auto space-y-4">
-            {/* Web search indicator */}
-            <AnimatePresence>
-              {webSearchQuery && (
-                <WebSearchIndicator query={webSearchQuery} isSearching={isWebSearching} />
-              )}
-            </AnimatePresence>
-
             <AnimatePresence mode="popLayout">
               {messages.length === 0 && (
                 <motion.div
@@ -1097,15 +1067,39 @@ export function Chat() {
                     <AvatarFallback className="bg-gradient-to-br from-violet-600 to-fuchsia-600 text-white text-sm">S</AvatarFallback>
                   </Avatar>
                   <Card className="bg-zinc-800/50 border-zinc-700 p-4">
-                    <motion.div className="flex gap-1" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-                      {[0, 1, 2].map((i) => (
-                        <motion.div
-                          key={i}
-                          className="w-2 h-2 bg-violet-400 rounded-full"
-                          animate={{ y: [0, -8, 0] }}
-                          transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.15 }}
-                        />
-                      ))}
+                    <motion.div className="flex flex-col gap-2" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                      {/* Web search indicator */}
+                      <AnimatePresence>
+                        {webSearchQuery && (
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            exit={{ opacity: 0, height: 0 }}
+                            className="flex items-center gap-2 text-sm"
+                          >
+                            <motion.div
+                              animate={isWebSearching ? { rotate: 360 } : {}}
+                              transition={{ duration: 1, repeat: isWebSearching ? Infinity : 0, ease: 'linear' }}
+                            >
+                              <Globe className="w-4 h-4 text-blue-400" />
+                            </motion.div>
+                            <span className="text-blue-300">
+                              {isWebSearching ? 'Searching the web...' : 'Processing results...'}
+                            </span>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                      {/* Typing dots */}
+                      <div className="flex gap-1">
+                        {[0, 1, 2].map((i) => (
+                          <motion.div
+                            key={i}
+                            className="w-2 h-2 bg-violet-400 rounded-full"
+                            animate={{ y: [0, -8, 0] }}
+                            transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.15 }}
+                          />
+                        ))}
+                      </div>
                     </motion.div>
                   </Card>
                 </motion.div>
