@@ -29,7 +29,7 @@ import {
 import {
   Send, Lock, Loader2, Sparkles, Copy, Check, Paperclip, X, FileText,
   Image as ImageIcon, FileSpreadsheet, Plus, Search, Trash2, MessageSquare,
-  ChevronLeft, ChevronRight, Globe, ExternalLink
+  ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Globe, ExternalLink
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -347,6 +347,7 @@ export function Chat() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [conversationToDelete, setConversationToDelete] = useState<Conversation | null>(null);
+  const [headerCollapsed, setHeaderCollapsed] = useState(false);
 
   // Web search state
   const [webSearchQuery, setWebSearchQuery] = useState<string | null>(null);
@@ -851,44 +852,98 @@ export function Chat() {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {/* Header */}
+        {/* Collapsible Header */}
         <motion.header
           initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
+          animate={{
+            opacity: 1,
+            y: 0,
+            height: headerCollapsed ? 'auto' : 'auto'
+          }}
           className="flex-shrink-0 border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-xl"
         >
-          <div className="px-4 py-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setSidebarOpen(!sidebarOpen)}
-                className="text-zinc-400 hover:text-white"
-              >
-                {sidebarOpen ? <ChevronLeft className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
-              </Button>
+          <AnimatePresence mode="wait">
+            {headerCollapsed ? (
               <motion.div
-                animate={{ rotate: [0, 10, -10, 0] }}
-                transition={{ duration: 2, repeat: Infinity, repeatDelay: 3 }}
+                key="collapsed"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                className="px-4 py-1.5 flex items-center justify-between"
               >
-                <Sparkles className="w-6 h-6 text-violet-400" />
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setSidebarOpen(!sidebarOpen)}
+                    className="text-zinc-400 hover:text-white h-7 w-7"
+                  >
+                    {sidebarOpen ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                  </Button>
+                  <Sparkles className="w-4 h-4 text-violet-400" />
+                  <span className="text-sm font-medium text-zinc-400">Sage</span>
+                  <Lock className={`w-3 h-3 ${isConnected ? 'text-emerald-400' : 'text-zinc-600'}`} />
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setHeaderCollapsed(false)}
+                  className="text-zinc-500 hover:text-white h-7 w-7"
+                >
+                  <ChevronDown className="w-4 h-4" />
+                </Button>
               </motion.div>
-              <h1 className="text-xl font-semibold bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent">
-                Sage
-              </h1>
-            </div>
-            <div className="flex items-center gap-2">
+            ) : (
               <motion.div
-                animate={{ scale: isConnected ? [1, 1.2, 1] : 1 }}
-                transition={{ duration: 1, repeat: isConnected ? Infinity : 0, repeatDelay: 2 }}
+                key="expanded"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                className="px-4 py-4 flex items-center justify-between"
               >
-                <Lock className={`w-4 h-4 ${isConnected ? 'text-emerald-400' : 'text-zinc-600'}`} />
+                <div className="flex items-center gap-3">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setSidebarOpen(!sidebarOpen)}
+                    className="text-zinc-400 hover:text-white"
+                  >
+                    {sidebarOpen ? <ChevronLeft className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
+                  </Button>
+                  <motion.div
+                    animate={{ rotate: [0, 10, -10, 0] }}
+                    transition={{ duration: 2, repeat: Infinity, repeatDelay: 3 }}
+                  >
+                    <Sparkles className="w-6 h-6 text-violet-400" />
+                  </motion.div>
+                  <h1 className="text-xl font-semibold bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent">
+                    Sage
+                  </h1>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2">
+                    <motion.div
+                      animate={{ scale: isConnected ? [1, 1.2, 1] : 1 }}
+                      transition={{ duration: 1, repeat: isConnected ? Infinity : 0, repeatDelay: 2 }}
+                    >
+                      <Lock className={`w-4 h-4 ${isConnected ? 'text-emerald-400' : 'text-zinc-600'}`} />
+                    </motion.div>
+                    <span className="text-xs text-zinc-500">
+                      {isConnected ? (useECDH ? 'ECDH Encrypted' : 'AES Encrypted') : 'Disconnected'}
+                    </span>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setHeaderCollapsed(true)}
+                    className="text-zinc-500 hover:text-white"
+                  >
+                    <ChevronUp className="w-4 h-4" />
+                  </Button>
+                </div>
               </motion.div>
-              <span className="text-xs text-zinc-500">
-                {isConnected ? (useECDH ? 'ECDH Encrypted' : 'AES Encrypted') : 'Disconnected'}
-              </span>
-            </div>
-          </div>
+            )}
+          </AnimatePresence>
         </motion.header>
 
         {/* Messages */}
