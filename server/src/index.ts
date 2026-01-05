@@ -432,10 +432,12 @@ app.post('/proxy/secure', async (c) => {
 
     // Get or create conversation
     let conversationId = request.conversationId;
+    let isNewConversation = false;
     if (!conversationId) {
       // Create a new conversation
       const newConvo = await db.createConversation(tenantId);
       conversationId = newConvo.id;
+      isNewConversation = true;
       console.log(`[Proxy/Secure] Created new conversation: ${conversationId}`);
     } else {
       // Verify conversation belongs to tenant
@@ -513,6 +515,22 @@ app.post('/proxy/secure', async (c) => {
     // Save assistant response to database
     await db.addMessage(conversationId, 'assistant', assistantResponse);
     await memory.store(tenantId, sessionId, 'assistant', assistantResponse);
+
+    // Generate smart title for new conversations
+    if (isNewConversation && lastUserMessage) {
+      try {
+        const titlePrompt = `Generate a very short title (max 5 words) that summarizes this conversation topic. Just output the title, nothing else.\n\nUser message: ${lastUserMessage.content.slice(0, 200)}`;
+        const generatedTitle = await callClaudeCLI(titlePrompt);
+        const cleanTitle = generatedTitle.trim().replace(/^["']|["']$/g, '').slice(0, 100);
+        if (cleanTitle && cleanTitle.length > 0) {
+          await db.updateConversationTitle(conversationId, tenantId, cleanTitle);
+          console.log(`[Proxy/Secure] Generated title: ${cleanTitle}`);
+        }
+      } catch (titleError) {
+        console.log('[Proxy/Secure] Failed to generate title:', titleError);
+        // Keep default title, not critical
+      }
+    }
 
     const responseData = JSON.stringify({
       content: [{ type: 'text', text: assistantResponse }],
