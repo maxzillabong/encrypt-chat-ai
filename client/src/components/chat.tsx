@@ -794,7 +794,7 @@ export function Chat() {
                         >
                           <button
                             onClick={() => loadMessages(convo.id)}
-                            className="w-full text-left p-3"
+                            className="w-full text-left p-3 pr-10"
                           >
                             <div className="flex items-start gap-2">
                               {convo.parent_id ? (
